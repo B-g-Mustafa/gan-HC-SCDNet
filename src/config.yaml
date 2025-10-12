@@ -1,0 +1,77 @@
+# HC-SCDNet Training Configuration
+
+model:
+  style_latent_dim: 512
+  content_latent_dim: 512
+  diffusion_steps: 10
+  beta: 4.0
+  hidden_dims: [64, 128, 256, 512]
+
+training:
+  num_epochs: 20
+  batch_size: 4
+  learning_rate:
+    vae: 1e-4
+    diffusion: 1e-5
+    discriminator: 2e-4
+  weight_decay: 1e-5
+
+  # Phase scheduling
+  phase1_epochs: 5    # β-VAE disentanglement
+  phase2_epochs: 15   # Hybrid integration
+  phase3_epochs: 20   # End-to-end fine-tuning
+
+loss_weights:
+  reconstruction: 1.0
+  style_kl: 1.0
+  content_kl: 1.0
+  mi_penalty: 0.1
+  perceptual: 1.0
+  style: 250.0
+  adversarial: 0.1
+
+data:
+  image_size: 512
+  num_workers: 4
+  style_categories:
+    - impressionism
+    - post_impressionism
+    - realism
+    - expressionism
+    - art_nouveau
+    - baroque
+    - romanticism
+    - cubism
+    - surrealism
+    - abstract_expressionism
+    - pop_art
+    - minimalism
+    - fauvism
+    - symbolism
+    - naive_art
+    - northern_renaissance
+    - high_renaissance
+    - mannerism
+    - rococo
+    - neoclassicism
+    - academic_art
+    - pointillism
+    - art_informel
+    - color_field
+    - lyrical_abstraction
+    - contemporary_realism
+    - photorealism
+
+evaluation:
+  num_samples: 100
+  save_every: 5
+  metrics:
+    content_ssim_target: 0.88
+    style_fidelity_target: 0.90
+    inference_time_target: 3.0
+    memory_usage_target: 0.8
+    mig_target: 0.15
+
+device: cuda
+use_wandb: true
+checkpoint_dir: checkpoints
