@@ -1,2 +1,13 @@
-./existing-pretrained/*.png
-./existing-pretrained/__pycache__/
+# Ignore Python bytecode caches (all repo)
+__pycache__/
+**/__pycache__/
+
+# Ignore images and generated outputs in the existing-pretrained folder
+existing-pretrained/images/
+existing-pretrained/*.png
+existing-pretrained/*.jpg
+existing-pretrained/*.jpeg
+
+# Keep any local envs or other common ignores (optional)
+.env
+.vscode/
