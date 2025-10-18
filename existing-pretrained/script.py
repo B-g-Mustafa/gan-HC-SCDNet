@@ -28,7 +28,7 @@ class PretrainedHCSCDNet(nn.Module):
     Uses Stable Diffusion components without custom training
     """
     
-    def __init__(self, device: str = 'mps'):
+    def __init__(self, device: str = 'cuda'):
         super().__init__()
         self.device = device
         
@@ -227,7 +227,7 @@ def test_pretrained_hcscdnet():
     print("="*60)
     print()
     
-    device = 'mps' if torch.mps.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     print()
     
@@ -332,8 +332,8 @@ def test_pretrained_hcscdnet():
     times = []
     
     for i in range(num_runs):
-        if torch.mps.is_available():
-            torch.mps.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         
         start = time.time()
         
@@ -344,8 +344,8 @@ def test_pretrained_hcscdnet():
                 num_inference_steps=10
             )
         
-        if torch.mps.is_available():
-            torch.mps.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         
         elapsed = time.time() - start
         times.append(elapsed)
@@ -362,8 +362,8 @@ def test_pretrained_hcscdnet():
     print("Test 6: Memory Usage")
     print("-" * 60)
     
-    if torch.mps.is_available():
-        torch.mps.reset_peak_memory_stats()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
         
         with torch.no_grad():
             _ = model.controllable_style_transfer(
@@ -372,7 +372,7 @@ def test_pretrained_hcscdnet():
                 num_inference_steps=10
             )
         
-        peak_memory = torch.mps.max_memory_allocated() / (1024**3)  # GB
+        peak_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
         print(f"   Peak GPU Memory: {peak_memory:.3f} GB")
         print(f"   Target: <0.8 GB {'✅ PASS' if peak_memory < 0.8 else '❌ FAIL'}")
     else:

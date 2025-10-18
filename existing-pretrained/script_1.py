@@ -61,7 +61,7 @@ import torchvision.transforms as transforms
 import torch
 
 # Load model
-device = 'mps' if torch.mps.is_available() else 'cpu'
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = PretrainedHCSCDNet(device=device)
 
 # Load your images
@@ -129,7 +129,7 @@ import torchvision.transforms as transforms
 import torch
 import numpy as np
 
-device = 'mps' if torch.mps.is_available() else 'cpu'
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = PretrainedHCSCDNet(device=device)
 
 # Load images
@@ -320,7 +320,7 @@ def test_with_real_images(content_path: str, style_path: str, output_dir: str = 
     os.makedirs(output_dir, exist_ok=True)
     
     # Setup
-    device = 'mps' if torch.mps.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     print(f"Loading pre-trained models...")
     

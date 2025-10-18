@@ -26,7 +26,7 @@ class PretrainedHCSCDNet(nn.Module):
     Uses Stable Diffusion components without custom training
     """
 
-    def __init__(self, device: str = 'mps'):
+    def __init__(self, device: str = 'cuda'):
         super().__init__()
         self.device = device
 
@@ -34,24 +34,24 @@ class PretrainedHCSCDNet(nn.Module):
 
         # Use Stable Diffusion's VAE as β-VAE (it already has some disentanglement)
         self.vae = AutoencoderKL.from_pretrained(
-            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "stabilityai/stable-diffusion-3.5-large",
             subfolder="vae"
         ).to(device)
 
         # Use Stable Diffusion's U-Net as diffusion model
         self.unet = UNet2DConditionModel.from_pretrained(
-            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "stabilityai/stable-diffusion-3.5-large",
             subfolder="unet"
         ).to(device)
 
         # Load CLIP for text/image encoding
         self.tokenizer = CLIPTokenizer.from_pretrained(
-            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "stabilityai/stable-diffusion-3.5-large",
             subfolder="tokenizer"
         )
 
         self.text_encoder = CLIPTextModel.from_pretrained(
-            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "stabilityai/stable-diffusion-3.5-large",
             subfolder="text_encoder"
         ).to(device)
 
@@ -81,7 +81,7 @@ class PretrainedHCSCDNet(nn.Module):
         # Scheduler for diffusion
         from diffusers import DDPMScheduler
         self.scheduler = DDPMScheduler.from_pretrained(
-            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "stabilityai/stable-diffusion-3.5-large",
             subfolder="scheduler"
         )
 
@@ -224,8 +224,8 @@ def test_pretrained_hcscdnet():
     print("="*60)
     print()
 
-    device = 'mps' 
-    # if torch.mps.is_available() else 'cpu'
+    device = 'cuda' 
+    # if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     print()
 
@@ -336,10 +336,10 @@ def test_pretrained_hcscdnet():
                 torch.cuda.synchronize()
             except Exception:
                 pass
-        elif hasattr(torch, 'mps') and getattr(torch.backends, 'mps', None) is not None and torch.backends.mps.is_available():
+        elif hasattr(torch, 'cuda') and getattr(torch.backends, 'cuda', None) is not None and torch.backends.cuda.is_available():
             try:
-                if hasattr(torch.mps, 'synchronize'):
-                    torch.mps.synchronize()
+                if hasattr(torch.cuda, 'synchronize'):
+                    torch.cuda.synchronize()
             except Exception:
                 pass
 
@@ -358,10 +358,10 @@ def test_pretrained_hcscdnet():
                 torch.cuda.synchronize()
             except Exception:
                 pass
-        elif hasattr(torch, 'mps') and getattr(torch.backends, 'mps', None) is not None and torch.backends.mps.is_available():
+        elif hasattr(torch, 'cuda') and getattr(torch.backends, 'cuda', None) is not None and torch.backends.cuda.is_available():
             try:
-                if hasattr(torch.mps, 'synchronize'):
-                    torch.mps.synchronize()
+                if hasattr(torch.cuda, 'synchronize'):
+                    torch.cuda.synchronize()
             except Exception:
                 pass
 
@@ -380,7 +380,7 @@ def test_pretrained_hcscdnet():
     print("Test 6: Memory Usage")
     print("-" * 60)
 
-    # Memory usage: handle CUDA and Apple MPS safely. Some PyTorch/MPS
+    # Memory usage: handle CUDA and Apple cuda safely. Some PyTorch/cuda
     # builds don't expose peak-memory APIs, so guard attribute access.
     if torch.cuda.is_available():
         # CUDA API
@@ -397,12 +397,12 @@ def test_pretrained_hcscdnet():
         print(f"   Peak GPU Memory (CUDA): {peak_memory:.3f} GB")
         print(f"   Target: <0.8 GB {'✅ PASS' if peak_memory < 0.8 else '❌ FAIL'}")
 
-    elif hasattr(torch, 'mps') and getattr(torch.backends, 'mps', None) is not None and torch.backends.mps.is_available():
-        # Apple MPS: some wheels expose profiling helpers, others don't.
+    elif hasattr(torch, 'cuda') and getattr(torch.backends, 'cuda', None) is not None and torch.backends.cuda.is_available():
+        # Apple cuda: some wheels expose profiling helpers, others don't.
         try:
             # reset_peak_memory_stats may not exist on all builds
-            if hasattr(torch.mps, 'reset_peak_memory_stats'):
-                torch.mps.reset_peak_memory_stats()
+            if hasattr(torch.cuda, 'reset_peak_memory_stats'):
+                torch.cuda.reset_peak_memory_stats()
 
             with torch.no_grad():
                 _ = model.controllable_style_transfer(
@@ -411,17 +411,17 @@ def test_pretrained_hcscdnet():
                     num_inference_steps=10
                 )
 
-            if hasattr(torch.mps, 'current_allocated_memory'):
-                peak_memory = torch.mps.current_allocated_memory() / (1024**3)  # GB
-                print(f"   Peak GPU Memory (MPS): {peak_memory:.3f} GB")
+            if hasattr(torch.cuda, 'current_allocated_memory'):
+                peak_memory = torch.cuda.current_allocated_memory() / (1024**3)  # GB
+                print(f"   Peak GPU Memory (cuda): {peak_memory:.3f} GB")
                 print(f"   Target: <0.8 GB {'✅ PASS' if peak_memory < 0.8 else '❌ FAIL'}")
             else:
-                print("   MPS memory profiling API not available in this PyTorch build - skipping memory measurement")
+                print("   cuda memory profiling API not available in this PyTorch build - skipping memory measurement")
 
         except Exception as e:
             # Don't let memory-profiling errors crash the test
-            print(f"   MPS memory measurement failed: {type(e).__name__}: {e}")
-            print("   Skipping memory measurement on MPS")
+            print(f"   cuda memory measurement failed: {type(e).__name__}: {e}")
+            print("   Skipping memory measurement on cuda")
 
     else:
         print("   GPU not available - skipping memory test")
