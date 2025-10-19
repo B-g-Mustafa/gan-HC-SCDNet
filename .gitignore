@@ -7,7 +7,14 @@ existing-pretrained/images/
 existing-pretrained/*.png
 existing-pretrained/*.jpg
 existing-pretrained/*.jpeg
+# Ignore dataset downloads
+b-vae/data/wikiart/
 
+#ignore .ipycache files
+**/.ipynb_checkpoints/
+
+#Ignore env files
+ccds-files/
 # Keep any local envs or other common ignores (optional)
 .env
 .vscode/
