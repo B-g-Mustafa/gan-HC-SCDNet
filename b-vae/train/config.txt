@@ -1,0 +1,17 @@
+image_size = 256
+batch_per_domain = 16   # B
+total_images_per_step = 32
+lr = 1e-4
+optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0)
+beta_schedule = [
+  (0, 2, 1.0),      # epochs 0-2 beta=1.0
+  (3, 6, 1.0->4.0), # linear increase to 4.0
+  (7, 999, 4.0)     # epochs >=7 beta=4.0
+]
+lambda_perc = 0.0  # start 0, add 0.1-0.5 later if needed
+epochs = 10..30 (start conservative and monitor)
+save_every_epoch = True
+save_every_n_steps = 1000  # optional
+mixed_precision = True
+gradient_accumulation = 1  # increase if OOM
+10
