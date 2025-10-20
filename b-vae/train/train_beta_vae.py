@@ -9,18 +9,21 @@ from data import SimpleImageFolder
 from beta_vae import BetaVAE
 from PIL import Image
 import numpy as np
+import itertools
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--data_dir', type=str, required=True, help='Path to images folder (train)')
-    p.add_argument('--val_dir', type=str, default=None, help='Path to validation images folder')
+    p.add_argument('--style_dir', type=str, required=True, help='Path to WikiArt style images')
+    p.add_argument('--content_dir', type=str, required=True, help='Path to COCO content images')
+    p.add_argument('--val_style_dir', type=str, default=None, help='Validation style images')
+    p.add_argument('--val_content_dir', type=str, default=None, help='Validation content images')
     p.add_argument('--image_size', type=int, default=256)
     p.add_argument('--style_dim', type=int, default=128)
     p.add_argument('--content_dim', type=int, default=128)
-    p.add_argument('--batch', type=int, default=8)
-    p.add_argument('--epochs', type=int, default=10)
+    p.add_argument('--batch_style', type=int, default=16)
+    p.add_argument('--batch_content', type=int, default=16)
+    p.add_argument('--epochs', type=int, default=30)
     p.add_argument('--lr', type=float, default=1e-4)
-    p.add_argument('--beta', type=float, default=4.0)
     p.add_argument('--save_dir', type=str, default='checkpoints')
     p.add_argument('--device', type=str, default='cuda')
     p.add_argument('--save_every', type=int, default=1)
@@ -30,6 +33,16 @@ def parse_args():
 def kl_loss(mu, lv):
     # lv is logvar
     return -0.5 * torch.mean(1 + lv - mu.pow(2) - lv.exp())
+
+#Dynamic beta schedule
+def get_beta(epoch):
+    if epoch < 3:       # warm-up
+        return 1.0
+    elif epoch < 7:     # linear increase
+        return 1.0 + (epoch - 2) * 0.75   # 1 → 4 over epochs 3–6
+    else:
+        return 4.0
+
 
 def reconstruction_loss(x, recon):
     return torch.mean(torch.abs(x - recon))  # L1
@@ -72,54 +85,57 @@ def train():
     os.makedirs(args.save_dir, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
 
-    train_ds = SimpleImageFolder(args.data_dir, image_size=args.image_size)
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=4, drop_last=True)
+    # Load datasets
+    style_ds = SimpleImageFolder(args.style_dir, image_size=args.image_size)
+    content_ds = SimpleImageFolder(args.content_dir, image_size=args.image_size)
+    style_loader = DataLoader(style_ds, batch_size=args.batch_style, shuffle=True, num_workers=6, drop_last=True)
+    content_loader = DataLoader(content_ds, batch_size=args.batch_content, shuffle=True, num_workers=6, drop_last=True)
 
-    val_loader = None
-    if args.val_dir:
-        val_ds = SimpleImageFolder(args.val_dir, image_size=args.image_size)
-        val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=2)
+    # Combined iterator (cycle shorter dataset)
+    style_iter = itertools.cycle(style_loader)
+    content_iter = iter(content_loader)
+    steps_per_epoch = len(content_loader)
 
     model = BetaVAE(img_size=args.image_size, style_dim=args.style_dim, content_dim=args.content_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
-    best_loss = 1e9
-    global_step = 0
-
-    for epoch in range(1, args.epochs+1):
+    for epoch in range(1, args.epochs + 1):
         model.train()
-        running_loss = 0.0
-        for i, batch in enumerate(train_loader):
-            imgs = batch.to(device)
-            recon, mu_s, lv_s, mu_c, lv_c = model(imgs)
-            rec_loss = reconstruction_loss(imgs, recon)
-            kls = kl_loss(mu_s, lv_s) + kl_loss(mu_c, lv_c)
-            loss = rec_loss + args.beta * kls
+        beta = get_beta(epoch)
+        running_loss = 0
+
+        for step in range(steps_per_epoch):
+            style_imgs = next(style_iter).to(device)
+            try:
+                content_imgs = next(content_iter)
+            except StopIteration:
+                content_iter = iter(content_loader)
+                content_imgs = next(content_iter)
+            content_imgs = content_imgs.to(device)
+
+            mu_s, lv_s, _, _ = model._forward_stats(style_imgs)
+            _, _, mu_c, lv_c = model._forward_stats(content_imgs)
+
+            z_s = model.reparam(mu_s, lv_s)
+            z_c = model.reparam(mu_c, lv_c)
+            recon = model.decode_from_latent(z_s, z_c)
+
+            L_rec = torch.mean(torch.abs(recon - content_imgs))
+            KL_s = -0.5 * torch.mean(1 + lv_s - mu_s.pow(2) - lv_s.exp())
+            KL_c = -0.5 * torch.mean(1 + lv_c - mu_c.pow(2) - lv_c.exp())
+            loss = L_rec + beta * (KL_s + KL_c)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             running_loss += loss.item()
-            global_step += 1
+            if step % 100 == 0:
+                print(f"Epoch {epoch}/{args.epochs} | Step {step}/{steps_per_epoch} | "
+                      f"Loss {loss.item():.4f} (rec {L_rec.item():.4f}, kl {(KL_s+KL_c).item():.4f}, beta={beta:.2f})")
 
-            if global_step % 50 == 0:
-                print(f"Epoch {epoch} Step {global_step} Batch {i} Loss {loss.item():.4f} rec {rec_loss.item():.4f} kl {kls.item():.4f}")
-
-        avg_loss = running_loss / len(train_loader)
-        print(f"Epoch {epoch} finished. Avg Loss: {avg_loss:.4f}")
-
-        # Save a batch reconstruction preview
-        model.eval()
-        with torch.no_grad():
-            sample_batch = next(iter(train_loader))[:8].to(device)
-            recon, *_ = model(sample_batch)
-            # stack input and recon
-            stacked = torch.cat([sample_batch, recon], dim=0)
-            save_image_tensor(stacked, os.path.join(args.save_dir, f'epoch_{epoch}_recon.png'), nrow=8)
-            # latent traversal visualization
-            latent_traversal_and_save(model, sample_batch, args.save_dir, device)
-
+        print(f"Epoch {epoch} complete. Avg loss: {running_loss / steps_per_epoch:.4f}")
+        
         # checkpoint
         if epoch % args.save_every == 0:
             ckpt = {
