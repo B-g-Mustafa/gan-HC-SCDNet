@@ -7,14 +7,22 @@ existing-pretrained/images/
 existing-pretrained/*.png
 existing-pretrained/*.jpg
 existing-pretrained/*.jpeg
-# Ignore dataset downloads
-b-vae/data/wikiart/
+# Ignore dataset split folders (entire directories)
+b-vae/data/wikiart_split/
+b-vae/data/coco_split/
 
 #ignore .ipycache files
 **/.ipynb_checkpoints/
+*.ipynb
 
 #Ignore env files
-ccds-files/
+ccds-files/py-output/
+ccds-files/test_results/
+ccds-files/logs/*.err
+ccds-files/logs/*.out
+
+#model checkpoints
+b-vae/model/*
 # Keep any local envs or other common ignores (optional)
 .env
 .vscode/

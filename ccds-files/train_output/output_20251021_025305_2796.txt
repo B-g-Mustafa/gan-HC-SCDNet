@@ -1,0 +1,18 @@
+==== VAE Training Run ====
+Started: Tue Oct 21 02:53:05 +08 2025
+Job Name: vae_train
+Job ID: 2796
+Node: TC2N01
+GPU(s) requested: 1
+Script: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/train/train_beta_vae.py
+Content Images Path: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/train/
+Content Images Path (Validation): /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/test/
+Style Images Path: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/train/
+Style Images Path (Validation): /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/test/
+Checkpoint Path: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/model/checkpoints/
+Output File: /home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/train_output/output_20251021_025305_2796.txt
+===========================
+
+Executing: python /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/train/train_beta_vae.py --content_dir /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/train/ --style_dir /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/train/
+/home/msai/birul001/birul001-gan/lib64/python3.9/site-packages/torch/utils/data/dataloader.py:558: UserWarning: This DataLoader will create 6 worker processes in total. Our suggested max number of worker in current system is 2, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.
+  warnings.warn(_create_warning_msg(

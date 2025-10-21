@@ -1,0 +1,89 @@
+==== VAE Training Run ====
+Started: Tue Oct 21 03:00:15 +08 2025
+Job Name: vae_train
+Job ID: 2797
+Node: TC2N01
+GPU(s) requested: 1
+Script: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/train/train_beta_vae.py
+Content Images Path: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/train/
+Content Images Path (Validation): /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/test/
+Style Images Path: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/train/
+Style Images Path (Validation): /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/test/
+Checkpoint Path: /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/model/checkpoints/
+Output File: /home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/train_output/output_20251021_030015_2797.txt
+===========================
+
+Executing: python /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/train/train_beta_vae.py --content_dir /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/train/ --style_dir /home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/train/
+Using device: cuda
+Epoch 1/30 | Step 0/6283 | Loss 0.5257 (rec 0.2590, kl 0.2667, beta=1.00)
+Epoch 1/30 | Step 100/6283 | Loss 0.2403 (rec 0.2355, kl 0.0048, beta=1.00)
+Epoch 1/30 | Step 200/6283 | Loss 0.2682 (rec 0.2653, kl 0.0029, beta=1.00)
+Epoch 1/30 | Step 300/6283 | Loss 0.2182 (rec 0.2162, kl 0.0020, beta=1.00)
+Epoch 1/30 | Step 400/6283 | Loss 0.2471 (rec 0.2439, kl 0.0031, beta=1.00)
+Epoch 1/30 | Step 500/6283 | Loss 0.2365 (rec 0.2333, kl 0.0032, beta=1.00)
+Epoch 1/30 | Step 600/6283 | Loss 0.2742 (rec 0.2268, kl 0.0474, beta=1.00)
+Epoch 1/30 | Step 700/6283 | Loss 0.2687 (rec 0.2145, kl 0.0542, beta=1.00)
+Epoch 1/30 | Step 800/6283 | Loss 0.2374 (rec 0.1990, kl 0.0383, beta=1.00)
+Epoch 1/30 | Step 900/6283 | Loss 0.2469 (rec 0.2000, kl 0.0469, beta=1.00)
+Epoch 1/30 | Step 1000/6283 | Loss 0.2225 (rec 0.1964, kl 0.0262, beta=1.00)
+Epoch 1/30 | Step 1100/6283 | Loss 0.2254 (rec 0.1872, kl 0.0382, beta=1.00)
+Epoch 1/30 | Step 1200/6283 | Loss 0.2557 (rec 0.2246, kl 0.0311, beta=1.00)
+Epoch 1/30 | Step 1300/6283 | Loss 0.2378 (rec 0.1997, kl 0.0381, beta=1.00)
+Epoch 1/30 | Step 1400/6283 | Loss 0.2381 (rec 0.2041, kl 0.0339, beta=1.00)
+Epoch 1/30 | Step 1500/6283 | Loss 0.2637 (rec 0.2186, kl 0.0451, beta=1.00)
+Epoch 1/30 | Step 1600/6283 | Loss 0.2316 (rec 0.2072, kl 0.0245, beta=1.00)
+Epoch 1/30 | Step 1700/6283 | Loss 0.1991 (rec 0.1691, kl 0.0300, beta=1.00)
+Epoch 1/30 | Step 1800/6283 | Loss 0.2575 (rec 0.2171, kl 0.0405, beta=1.00)
+Epoch 1/30 | Step 1900/6283 | Loss 0.2532 (rec 0.2160, kl 0.0372, beta=1.00)
+Epoch 1/30 | Step 2000/6283 | Loss 0.2280 (rec 0.1911, kl 0.0369, beta=1.00)
+Epoch 1/30 | Step 2100/6283 | Loss 0.2188 (rec 0.1887, kl 0.0301, beta=1.00)
+Epoch 1/30 | Step 2200/6283 | Loss 0.2171 (rec 0.1778, kl 0.0393, beta=1.00)
+Epoch 1/30 | Step 2300/6283 | Loss 0.2394 (rec 0.2132, kl 0.0263, beta=1.00)
+Epoch 1/30 | Step 2400/6283 | Loss 0.1998 (rec 0.1663, kl 0.0335, beta=1.00)
+Epoch 1/30 | Step 2500/6283 | Loss 0.2309 (rec 0.1976, kl 0.0333, beta=1.00)
+Epoch 1/30 | Step 2600/6283 | Loss 0.2381 (rec 0.1945, kl 0.0435, beta=1.00)
+Epoch 1/30 | Step 2700/6283 | Loss 0.2231 (rec 0.1891, kl 0.0340, beta=1.00)
+Epoch 1/30 | Step 2800/6283 | Loss 0.2620 (rec 0.1927, kl 0.0693, beta=1.00)
+Epoch 1/30 | Step 2900/6283 | Loss 0.2120 (rec 0.1815, kl 0.0305, beta=1.00)
+Epoch 1/30 | Step 3000/6283 | Loss 0.2218 (rec 0.1930, kl 0.0287, beta=1.00)
+Epoch 1/30 | Step 3100/6283 | Loss 0.2305 (rec 0.1946, kl 0.0359, beta=1.00)
+Epoch 1/30 | Step 3200/6283 | Loss 0.2343 (rec 0.2056, kl 0.0287, beta=1.00)
+Epoch 1/30 | Step 3300/6283 | Loss 0.2250 (rec 0.1896, kl 0.0354, beta=1.00)
+Epoch 1/30 | Step 3400/6283 | Loss 0.2006 (rec 0.1661, kl 0.0345, beta=1.00)
+Epoch 1/30 | Step 3500/6283 | Loss 0.2387 (rec 0.1786, kl 0.0602, beta=1.00)
+Epoch 1/30 | Step 3600/6283 | Loss 0.2275 (rec 0.1976, kl 0.0299, beta=1.00)
+Epoch 1/30 | Step 3700/6283 | Loss 0.2177 (rec 0.1975, kl 0.0203, beta=1.00)
+Epoch 1/30 | Step 3800/6283 | Loss 0.2183 (rec 0.1915, kl 0.0268, beta=1.00)
+Epoch 1/30 | Step 3900/6283 | Loss 0.2111 (rec 0.1848, kl 0.0263, beta=1.00)
+Epoch 1/30 | Step 4000/6283 | Loss 0.2110 (rec 0.1880, kl 0.0230, beta=1.00)
+Epoch 1/30 | Step 4100/6283 | Loss 0.2038 (rec 0.1796, kl 0.0242, beta=1.00)
+Epoch 1/30 | Step 4200/6283 | Loss 0.2113 (rec 0.1836, kl 0.0277, beta=1.00)
+Epoch 1/30 | Step 4300/6283 | Loss 0.2699 (rec 0.1949, kl 0.0749, beta=1.00)
+Epoch 1/30 | Step 4400/6283 | Loss 0.2228 (rec 0.1843, kl 0.0386, beta=1.00)
+Epoch 1/30 | Step 4500/6283 | Loss 0.2242 (rec 0.1835, kl 0.0407, beta=1.00)
+Epoch 1/30 | Step 4600/6283 | Loss 0.2271 (rec 0.1974, kl 0.0297, beta=1.00)
+Epoch 1/30 | Step 4700/6283 | Loss 0.2073 (rec 0.1791, kl 0.0282, beta=1.00)
+Epoch 1/30 | Step 4800/6283 | Loss 0.2493 (rec 0.2197, kl 0.0296, beta=1.00)
+Epoch 1/30 | Step 4900/6283 | Loss 0.2054 (rec 0.1681, kl 0.0373, beta=1.00)
+Epoch 1/30 | Step 5000/6283 | Loss 0.2191 (rec 0.1948, kl 0.0243, beta=1.00)
+Epoch 1/30 | Step 5100/6283 | Loss 0.2334 (rec 0.2061, kl 0.0272, beta=1.00)
+Epoch 1/30 | Step 5200/6283 | Loss 0.2114 (rec 0.1814, kl 0.0300, beta=1.00)
+Epoch 1/30 | Step 5300/6283 | Loss 0.2066 (rec 0.1820, kl 0.0245, beta=1.00)
+Epoch 1/30 | Step 5400/6283 | Loss 0.2201 (rec 0.1959, kl 0.0242, beta=1.00)
+Epoch 1/30 | Step 5500/6283 | Loss 0.2343 (rec 0.2062, kl 0.0281, beta=1.00)
+Epoch 1/30 | Step 5600/6283 | Loss 0.2252 (rec 0.1970, kl 0.0281, beta=1.00)
+Epoch 1/30 | Step 5700/6283 | Loss 0.1942 (rec 0.1647, kl 0.0295, beta=1.00)
+Epoch 1/30 | Step 5800/6283 | Loss 0.2146 (rec 0.1885, kl 0.0261, beta=1.00)
+Epoch 1/30 | Step 5900/6283 | Loss 0.2044 (rec 0.1819, kl 0.0224, beta=1.00)
+Epoch 1/30 | Step 6000/6283 | Loss 0.1989 (rec 0.1747, kl 0.0242, beta=1.00)
+Epoch 1/30 | Step 6100/6283 | Loss 0.2029 (rec 0.1753, kl 0.0277, beta=1.00)
+Epoch 1/30 | Step 6200/6283 | Loss 0.2092 (rec 0.1832, kl 0.0260, beta=1.00)
+Epoch 1 complete. Avg loss: 0.2347
+Saved checkpoint epoch 1
+Traceback (most recent call last):
+  File "/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/train/train_beta_vae.py", line 168, in <module>
+    train()
+  File "/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/train/train_beta_vae.py", line 152, in train
+    if val_loader:
+NameError: name 'val_loader' is not defined
+AI job completed at Tue Oct 21 03:48:17 +08 2025
