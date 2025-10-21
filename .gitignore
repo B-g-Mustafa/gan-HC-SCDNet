@@ -20,6 +20,8 @@ ccds-files/py-output/
 ccds-files/test_results/
 ccds-files/logs/*.err
 ccds-files/logs/*.out
+ccds-files/logs/infer/
+ccds-files/infer_output/
 
 #model checkpoints
 b-vae/model/*
