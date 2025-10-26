@@ -234,15 +234,21 @@ def decode_with_vae(vae, latents):
 
 def add_noise_for_img2img(scheduler, latents, strength, noise):
     """Add noise to latents for img2img (preserves some content structure)."""
-    # Calculate how many timesteps to denoise based on strength
-    init_timestep = int(scheduler.config.num_train_timesteps * strength)
-    init_timestep = min(init_timestep, scheduler.config.num_train_timesteps)
+    # FlowMatchEulerDiscreteScheduler doesn't have add_noise method
+    # Use simple linear interpolation for flow matching
+    # strength controls how much of the original content is preserved
     
-    timesteps = scheduler.timesteps[-init_timestep]
-    timesteps = torch.tensor([timesteps], device=latents.device)
+    # Get a timestep based on strength
+    num_inference_steps = 20  # Default number of steps
+    init_timestep = int(num_inference_steps * strength)
+    init_timestep = min(init_timestep, num_inference_steps - 1)
     
-    # Add noise according to noise magnitude at timestep
-    noisy_latents = scheduler.add_noise(latents, noise, timesteps)
+    # For flow matching, we interpolate between latent and noise
+    # strength=1.0 means full noise, strength=0.0 means no noise
+    noisy_latents = latents * (1 - strength) + noise * strength
+    
+    # Create timestep tensor (flow matching uses timesteps from 0 to 1)
+    timesteps = torch.tensor([strength], device=latents.device)
     
     return noisy_latents, timesteps
 
