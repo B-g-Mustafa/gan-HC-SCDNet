@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from diffusers import StableDiffusion3Pipeline, SD3Transformer2DModel, AutoencoderKL
-from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
+from transformers import CLIPTextModel, CLIPTokenizer
 from peft import LoraConfig, get_peft_model, PeftModel
 import lpips
 from PIL import Image
@@ -64,8 +64,8 @@ class Config:
     num_inference_steps = 20
     
     # Data paths
-    content_dir = "../b-vae/data/coco_split/train"
-    style_dir = "../b-vae/data/wikiart_split/train"
+    content_dir = "../b-vae/data/coco_split/coco50/train"
+    style_dir = "../b-vae/data/wikiart_split/split50/train"
     
     # Logging
     log_with = "wandb"
@@ -164,6 +164,11 @@ class VGGPerceptualLoss(torch.nn.Module):
     
     def forward(self, generated, content, style):
         """Compute combined content and style loss."""
+        # Convert to float32 for VGG (it doesn't support bfloat16)
+        generated = generated.float()
+        content = content.float()
+        style = style.float()
+        
         gen_features = self.extract_features(generated)
         content_features = self.extract_features(content)
         style_features = self.extract_features(style)
@@ -264,7 +269,7 @@ def train_step(batch, pipeline, optimizer, perceptual_loss, lpips_fn,
     prompt = "transfer the artistic style"
     
     with accelerator.autocast():
-        # Get text embeddings
+        # Get text embeddings from CLIP encoder (SD3.5-medium uses CLIP only)
         text_inputs = pipeline.tokenizer(
             prompt,
             padding="max_length",
@@ -273,6 +278,7 @@ def train_step(batch, pipeline, optimizer, perceptual_loss, lpips_fn,
             return_tensors="pt"
         ).to(accelerator.device)
         
+        # Get embeddings from CLIP text encoder
         text_embeddings = pipeline.text_encoder(text_inputs.input_ids)[0]
         
         # Predict noise with transformer
@@ -286,15 +292,15 @@ def train_step(batch, pipeline, optimizer, perceptual_loss, lpips_fn,
         generated_latents = noisy_latents - model_pred
         generated_imgs = decode_with_vae(pipeline.vae, generated_latents)
     
-    # Compute losses
+    # Compute losses (convert to float32 for LPIPS as well)
     content_loss, style_loss = perceptual_loss(
         generated_imgs, 
         content_imgs, 
         style_imgs
     )
     
-    # LPIPS perceptual loss
-    lpips_loss = lpips_fn(generated_imgs, content_imgs).mean()
+    # LPIPS perceptual loss (expects float32)
+    lpips_loss = lpips_fn(generated_imgs.float(), content_imgs.float()).mean()
     
     # Combined loss
     total_loss = (cfg.lambda_content * content_loss + 
@@ -397,14 +403,25 @@ def main():
     if cfg.gradient_checkpointing:
         transformer.enable_gradient_checkpointing()
     
-    # Create pipeline
-    pipeline = StableDiffusion3Pipeline.from_pretrained(
+    # Load scheduler separately
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         cfg.model_id,
+        subfolder="scheduler"
+    )
+    
+    # SD3.5-medium uses CLIP only (not T5 like SD3-large)
+    # Create pipeline directly from components (avoids the offload_state_dict issue)
+    pipeline = StableDiffusion3Pipeline(
         vae=vae,
         text_encoder=text_encoder,
+        text_encoder_2=None,  # SD3.5-medium doesn't use T5
+        text_encoder_3=None,
         tokenizer=tokenizer,
+        tokenizer_2=None,
+        tokenizer_3=None,
         transformer=transformer,
-        torch_dtype=torch.bfloat16
+        scheduler=scheduler
     )
     
     # Setup optimizer
@@ -508,16 +525,50 @@ def inference_style_transfer(content_path, style_path, lora_path, output_path):
     
     print("Loading model for inference...")
     
-    # Load base pipeline
-    pipeline = StableDiffusion3Pipeline.from_pretrained(
+    # Load components separately
+    vae = AutoencoderKL.from_pretrained(
         cfg.model_id,
+        subfolder="vae",
         torch_dtype=torch.bfloat16
     )
     
+    text_encoder = CLIPTextModel.from_pretrained(
+        cfg.model_id,
+        subfolder="text_encoder",
+        torch_dtype=torch.bfloat16
+    )
+    
+    tokenizer = CLIPTokenizer.from_pretrained(
+        cfg.model_id,
+        subfolder="tokenizer"
+    )
+    
+    transformer = SD3Transformer2DModel.from_pretrained(
+        cfg.model_id,
+        subfolder="transformer",
+        torch_dtype=torch.bfloat16
+    )
+    
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        cfg.model_id,
+        subfolder="scheduler"
+    )
+    
     # Load LoRA weights
-    pipeline.transformer = PeftModel.from_pretrained(
-        pipeline.transformer,
-        lora_path
+    transformer = PeftModel.from_pretrained(transformer, lora_path)
+    
+    # Create pipeline from components (SD3.5-medium uses CLIP only)
+    pipeline = StableDiffusion3Pipeline(
+        vae=vae,
+        text_encoder=text_encoder,
+        text_encoder_2=None,
+        text_encoder_3=None,
+        tokenizer=tokenizer,
+        tokenizer_2=None,
+        tokenizer_3=None,
+        transformer=transformer,
+        scheduler=scheduler
     )
     
     pipeline = pipeline.to("cuda")
