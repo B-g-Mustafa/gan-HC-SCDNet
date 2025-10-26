@@ -63,9 +63,9 @@ class Config:
     img2img_strength = 0.6  # How much to denoise (higher = more style)
     num_inference_steps = 20
     
-    # Data paths
-    content_dir = "../b-vae/data/coco_split/coco50/train"
-    style_dir = "../b-vae/data/wikiart_split/split50/train"
+    # Data paths (use absolute paths to avoid issues with working directory)
+    content_dir = "/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/coco50/train"
+    style_dir = "/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/split50/train"
     
     # Logging
     log_with = "wandb"
@@ -219,6 +219,8 @@ def setup_lora_model(transformer):
 def encode_with_vae(vae, images):
     """Encode images to latent space using VAE."""
     with torch.no_grad():
+        # Convert to bfloat16 to match VAE dtype
+        images = images.to(dtype=torch.bfloat16)
         latents = vae.encode(images).latent_dist.sample()
         latents = latents * vae.config.scaling_factor
     return latents
@@ -350,7 +352,7 @@ def main():
     set_seed(cfg.seed)
     
     # Load models (wrapped in try/except to surface errors clearly)
-    print("Loading Stable Diffusion 3.5 Large...")
+    print("Loading Stable Diffusion 3.5 Medium...")
     sys.stdout.flush()
     try:
         # Load VAE (frozen)
@@ -440,6 +442,21 @@ def main():
         cfg.style_dir,
         cfg.resolution
     )
+    
+    # Check if dataset is empty
+    if len(dataset.content_paths) == 0:
+        print(f"ERROR: No content images found in {cfg.content_dir}")
+        print(f"Please check the path exists and contains .jpg or .png files")
+        sys.exit(1)
+    
+    if len(dataset.style_paths) == 0:
+        print(f"ERROR: No style images found in {cfg.style_dir}")
+        print(f"Please check the path exists and contains .jpg or .png files")
+        sys.exit(1)
+    
+    print(f"Found {len(dataset.content_paths)} content images")
+    print(f"Found {len(dataset.style_paths)} style images")
+    print(f"Dataset size: {len(dataset)} samples")
     
     dataloader = DataLoader(
         dataset,
