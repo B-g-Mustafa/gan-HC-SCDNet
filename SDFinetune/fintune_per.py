@@ -426,6 +426,10 @@ def main():
         scheduler=scheduler
     )
     
+    # Move pipeline components to accelerator device
+    pipeline.vae = pipeline.vae.to(accelerator.device)
+    pipeline.text_encoder = pipeline.text_encoder.to(accelerator.device)
+    
     # Setup optimizer
     optimizer = torch.optim.AdamW(
         transformer.parameters(),
