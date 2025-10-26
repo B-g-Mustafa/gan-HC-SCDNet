@@ -13,6 +13,8 @@ from peft import LoraConfig, get_peft_model, PeftModel
 import lpips
 from PIL import Image
 import os
+import sys
+import traceback
 from pathlib import Path
 from tqdm import tqdm
 import wandb
@@ -26,7 +28,7 @@ import numpy as np
 
 class Config:
     # Model settings
-    model_id = "stabilityai/stable-diffusion-3.5-large"
+    model_id = "stabilityai/stable-diffusion-3.5-medium"
     output_dir = "./sd35_style_transfer_lora"
     
     # LoRA settings
@@ -62,8 +64,8 @@ class Config:
     num_inference_steps = 20
     
     # Data paths
-    content_dir = "./data/content_images"
-    style_dir = "./data/style_images"
+    content_dir = "../b-vae/data/coco_split/train"
+    style_dir = "../b-vae/data/wikiart_split/train"
     
     # Logging
     log_with = "wandb"
@@ -341,36 +343,52 @@ def main():
     # Set seed
     set_seed(cfg.seed)
     
-    # Load models
+    # Load models (wrapped in try/except to surface errors clearly)
     print("Loading Stable Diffusion 3.5 Large...")
-    
-    # Load VAE (frozen)
-    vae = AutoencoderKL.from_pretrained(
-        cfg.model_id,
-        subfolder="vae",
-        torch_dtype=torch.bfloat16
-    )
-    vae.requires_grad_(False)
-    
-    # Load text encoders (frozen)
-    text_encoder = CLIPTextModel.from_pretrained(
-        cfg.model_id,
-        subfolder="text_encoder",
-        torch_dtype=torch.bfloat16
-    )
-    text_encoder.requires_grad_(False)
-    
-    tokenizer = CLIPTokenizer.from_pretrained(
-        cfg.model_id,
-        subfolder="tokenizer"
-    )
-    
-    # Load transformer (will apply LoRA)
-    transformer = SD3Transformer2DModel.from_pretrained(
-        cfg.model_id,
-        subfolder="transformer",
-        torch_dtype=torch.bfloat16
-    )
+    sys.stdout.flush()
+    try:
+        # Load VAE (frozen)
+        print("-> Loading VAE subfolder...")
+        sys.stdout.flush()
+        vae = AutoencoderKL.from_pretrained(
+            cfg.model_id,
+            subfolder="vae",
+            torch_dtype=torch.bfloat16
+        )
+        vae.requires_grad_(False)
+        print("<-- VAE loaded")
+        sys.stdout.flush()
+
+        # Load text encoders (frozen)
+        text_encoder = CLIPTextModel.from_pretrained(
+            cfg.model_id,
+            subfolder="text_encoder",
+            torch_dtype=torch.bfloat16
+        )
+        text_encoder.requires_grad_(False)
+
+        tokenizer = CLIPTokenizer.from_pretrained(
+            cfg.model_id,
+            subfolder="tokenizer"
+        )
+        print("<-- Tokenizer loaded")
+        sys.stdout.flush()
+
+        # Load transformer (will apply LoRA)
+        print("-> Loading transformer subfolder...")
+        sys.stdout.flush()
+        transformer = SD3Transformer2DModel.from_pretrained(
+            cfg.model_id,
+            subfolder="transformer",
+            torch_dtype=torch.bfloat16
+        )
+        print("<-- Transformer loaded")
+        sys.stdout.flush()
+    except Exception as e:
+        print("Error while loading pre-trained model components:")
+        traceback.print_exc()
+        # Ensure the process exits with non-zero so Slurm marks it as failed
+        sys.exit(2)
     
     # Apply LoRA
     print("\nApplying LoRA to MM-DiT transformer...")
@@ -547,3 +565,4 @@ if __name__ == "__main__":
     #     "./sd35_style_transfer_lora/final",
     #     "output_stylized.jpg"
     # )
+    #d9a74b72096b984643e4b3246a816e62be94d572 wandb
