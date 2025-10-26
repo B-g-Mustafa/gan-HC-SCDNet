@@ -287,14 +287,20 @@ def train_step(batch, pipeline, optimizer, perceptual_loss, lpips_fn,
         ).to(accelerator.device)
         
         # Get embeddings from CLIP text encoder
-        text_embeddings = pipeline.text_encoder(text_inputs.input_ids)[0]
+        # SD3 needs both the full embeddings and the pooled output
+        text_encoder_output = pipeline.text_encoder(text_inputs.input_ids, output_hidden_states=False)
+        text_embeddings = text_encoder_output.last_hidden_state
+        pooled_embeddings = text_encoder_output.pooler_output  # This is the pooled output we need
         
         # Predict noise with transformer
+        # SD3 transformer expects: hidden_states, timestep, encoder_hidden_states, pooled_projections
         model_pred = pipeline.transformer(
-            noisy_latents,
-            timesteps,
-            encoder_hidden_states=text_embeddings
-        ).sample
+            hidden_states=noisy_latents,
+            timestep=timesteps,
+            encoder_hidden_states=text_embeddings,
+            pooled_projections=pooled_embeddings,
+            return_dict=False
+        )[0]
         
         # Decode to images
         generated_latents = noisy_latents - model_pred
