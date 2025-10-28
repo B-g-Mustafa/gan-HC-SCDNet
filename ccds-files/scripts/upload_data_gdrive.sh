@@ -1,0 +1,100 @@
+#!/bin/bash
+#SBATCH --partition=MGPU-TC2          # GPU partition
+#SBATCH --qos=normal                  # QoS level
+#SBATCH --nodes=1                     # Use 1 node
+#SBATCH --gres=gpu:1                  # Request 1 GPU
+#SBATCH --mem=8G                     # Allocate 8 GB of memory
+#SBATCH --time=05:55:00               # Max job time = 5 hours 55 minutes
+#SBATCH --job-name=coco_test_upload_data          # Job name
+#SBATCH --output=/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/logs/others/upload_data_gdrive_output_%x_%j.out   # Std output log
+#SBATCH --error=/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/logs/others/upload_data_gdrive_error_%x_%j.err     # Std error log
+
+
+# -----------------------------
+# Step 2: Activate your environment
+# -----------------------------
+HOME_PATH="/home/msai/birul001/"   # <-- change this to your conda/env path
+source "${HOME_PATH}/birul001-gan/bin/activate"
+
+# -----------------------------
+# Step 2.1: Login to Hugging Face (uses token env var)
+# -----------------------------
+# export HF_TOKEN="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"
+# echo "Logging into Hugging Face Hub..."
+# huggingface-cli login --token "$HF_TOKEN"
+# -----------------------------
+# Step 3: Ensure required packages are installed
+# -----------------------------
+# echo "Checking and installing required Python libraries..."
+# REQUIREMENTS_FILE="/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/requirement.txt"  # path to your requirements
+# if [ -f "$REQUIREMENTS_FILE" ]; then
+#     pip install --upgrade pip
+#     pip install -r "$REQUIREMENTS_FILE"
+# else
+#     echo "No requirements.txt found, installing default AI libraries..."
+#     pip install torch torchvision torchaudio transformers numpy
+# fi
+
+# -----------------------------
+# Step 3: Define paths for the AI task
+# -----------------------------
+PYTHON_SCRIPT="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/scripts/upload_datapoints_folder.py"  # <-- your Python script path
+# COCO_TRAIN_PATH="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/train/"
+# DRIVE_FOLDER_ID="1XqkjQSDJv3k1W6xYbZCjd--hm8SiBznT"
+COCO_TEST_PATH="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/"
+DRIVE_FOLDER_TEST_ID="1l0_FIQczjOn38ZWDOvZ3kaqF3xXrt3rj"
+# STYLE_PATH="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/train/"
+# STYLE_PATH_val="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/test/"
+# CHECKPOINT_PATH="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/model/checkpoints/"
+
+# -----------------------------
+# Step 3.1: Prepare a new output file for this run
+# -----------------------------
+CCDS_DIR="/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files"
+# mkdir -p "$CCDS_DIR"
+
+# Create a unique, timestamped output file and write a header
+RUN_TS=$(date +"%Y%m%d_%H%M%S")
+JOB_ID="${SLURM_JOB_ID:-local}"
+OUTPUT_TXT="${CCDS_DIR}/py-output/upload_g_drive_output_${RUN_TS}_${JOB_ID}.txt"
+{
+  echo "==== data gdrive upload ===="
+  echo "Started: $(date)"
+  echo "Job Name: ${SLURM_JOB_NAME:-VAE-Train}"
+  echo "Job ID: ${SLURM_JOB_ID:-N/A}"
+  echo "Node: $(hostname)"
+  echo "GPU(s) requested: ${SLURM_GPUS:-1}"
+  echo "Script: $PYTHON_SCRIPT"
+  echo "Content Images Path: $CONTENT_PATH"
+  echo "Content Images Path (Validation): $CONTENT_PATH_val"
+  echo "Style Images Path: $STYLE_PATH"
+  echo "Style Images Path (Validation): $STYLE_PATH_val"
+  echo "Checkpoint Path: $CHECKPOINT_PATH"
+  echo "Output File: $OUTPUT_TXT"
+  echo "==========================="
+  echo
+} > "$OUTPUT_TXT"
+
+# -----------------------------
+# Step 4: Run your AI task
+# -----------------------------
+echo "Running upload job on GPU..."
+
+if [ -f "$PYTHON_SCRIPT" ]; then
+    echo "Executing: python -u $PYTHON_SCRIPT --local $COCO_TEST_PATH --drive-id $DRIVE_FOLDER_TEST_ID" >> "$OUTPUT_TXT"
+    # Run python with -u (unbuffered) to ensure output is flushed to the output file immediately
+    python -u "$PYTHON_SCRIPT" --local "$COCO_TEST_PATH" --drive-id "$DRIVE_FOLDER_TEST_ID" >> "$OUTPUT_TXT" 2>&1
+    PY_EXIT=$?
+    if [ $PY_EXIT -ne 0 ]; then
+        echo "Python exited with code $PY_EXIT" >> "$OUTPUT_TXT"
+    else
+        echo "Python finished successfully (exit 0)" >> "$OUTPUT_TXT"
+    fi
+else
+    echo "Python script not found at $PYTHON_SCRIPT" >> "$OUTPUT_TXT"
+fi
+
+# -----------------------------
+# Step 5: Job completion message
+# -----------------------------
+echo "AI job completed at $(date)" | tee -a "$OUTPUT_TXT"
