@@ -13,7 +13,8 @@ This allows you to:
 
 import torch
 import torch.nn as nn
-from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionModel
+from diffusers import StableDiffusionPipeline, AutoencoderKL
+from diffusers.models import SD3Transformer2DModel
 from transformers import CLIPTextModel, CLIPTokenizer
 import numpy as np
 from PIL import Image
@@ -38,10 +39,11 @@ class PretrainedHCSCDNet(nn.Module):
             subfolder="vae"
         ).to(device)
 
-        # Use Stable Diffusion's U-Net as diffusion model
-        self.unet = UNet2DConditionModel.from_pretrained(
+        # Use Stable Diffusion 3.5's Transformer model (not UNet, which is for older SD versions)
+        # SD 3.5 uses a DiT (Diffusion Transformer) architecture stored in the "transformer" folder
+        self.transformer = SD3Transformer2DModel.from_pretrained(
             "stabilityai/stable-diffusion-3.5-large",
-            subfolder="unet"
+            subfolder="transformer"
         ).to(device)
 
         # Load CLIP for text/image encoding
@@ -58,7 +60,7 @@ class PretrainedHCSCDNet(nn.Module):
         # Freeze all pre-trained parameters
         for param in self.vae.parameters():
             param.requires_grad = False
-        for param in self.unet.parameters():
+        for param in self.transformer.parameters():
             param.requires_grad = False
         for param in self.text_encoder.parameters():
             param.requires_grad = False
@@ -87,7 +89,7 @@ class PretrainedHCSCDNet(nn.Module):
 
         print("✅ Pre-trained models loaded successfully!")
         print(f"   VAE parameters: {sum(p.numel() for p in self.vae.parameters()):,}")
-        print(f"   U-Net parameters: {sum(p.numel() for p in self.unet.parameters()):,}")
+        print(f"   Transformer parameters: {sum(p.numel() for p in self.transformer.parameters()):,}")
         print(f"   Trainable projection layers: {sum(p.numel() for p in self.style_projector.parameters()) + sum(p.numel() for p in self.content_projector.parameters()):,}")
 
     def encode_to_latent(self, image: torch.Tensor) -> torch.Tensor:
@@ -189,14 +191,14 @@ class PretrainedHCSCDNet(nn.Module):
 
         # Diffusion denoising loop
         for i, t in enumerate(timesteps):
-            # Expand timestep
-            timestep = t.expand(batch_size).to(self.device)
+            # Expand timestep for batch
+            timestep = t.unsqueeze(0).expand(batch_size).to(self.device)
 
-            # Predict noise
+            # Predict noise using transformer (SD3.5 uses transformer instead of UNet)
             with torch.no_grad():
-                noise_pred = self.unet(
-                    noisy_latent,
-                    timestep,
+                noise_pred = self.transformer(
+                    hidden_states=noisy_latent,
+                    timestep=timestep,
                     encoder_hidden_states=text_embeddings
                 ).sample
 
@@ -208,7 +210,8 @@ class PretrainedHCSCDNet(nn.Module):
             # Apply content preservation by blending with original
             if content_preservation > 0.5:
                 blend_factor = (i + 1) / len(timesteps)  # Progressive blending
-                noisy_latent = (1 - blend_factor * content_preservation) * noisy_latent +                               blend_factor * content_preservation * current_latent
+                noisy_latent = (1 - blend_factor * content_preservation) * noisy_latent + \
+                               blend_factor * content_preservation * current_latent
 
         # Decode to image
         generated_image = self.decode_from_latent(noisy_latent)

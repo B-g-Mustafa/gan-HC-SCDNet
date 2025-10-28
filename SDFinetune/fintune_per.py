@@ -287,13 +287,24 @@ def train_step(batch, pipeline, optimizer, perceptual_loss, lpips_fn,
         ).to(accelerator.device)
         
         # Get embeddings from CLIP text encoder
-        # SD3 needs both the full embeddings and the pooled output
         text_encoder_output = pipeline.text_encoder(text_inputs.input_ids, output_hidden_states=False)
         text_embeddings = text_encoder_output.last_hidden_state
-        pooled_embeddings = text_encoder_output.pooler_output  # This is the pooled output we need
+        pooled_embeddings = text_encoder_output.pooler_output
+        
+        # For SD3.5-medium, we need to handle pooled projections carefully
+        # The model expects 2048 dims (CLIP 768 + T5 1280), but we only have CLIP
+        # Pad the pooled embeddings to match expected dimension
+        if pooled_embeddings.shape[-1] == 768:
+            # Pad with zeros to reach 2048 dimensions
+            padding = torch.zeros(
+                pooled_embeddings.shape[0], 
+                2048 - 768,
+                device=pooled_embeddings.device,
+                dtype=pooled_embeddings.dtype
+            )
+            pooled_embeddings = torch.cat([pooled_embeddings, padding], dim=-1)
         
         # Predict noise with transformer
-        # SD3 transformer expects: hidden_states, timestep, encoder_hidden_states, pooled_projections
         model_pred = pipeline.transformer(
             hidden_states=noisy_latents,
             timestep=timesteps,
