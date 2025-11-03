@@ -23,24 +23,38 @@ def list_images(input_dir: str, recursive: bool = True):
     return sorted(img_paths)
 
 def extract_json_from_text(text: str, img_path: str):
+    """Extract caption information from model output text.
+    Returns a dictionary with captions or None if parsing fails."""
+    
     pattern = re.compile(
-    r"\*\*Content Caption:\*\*\s*([^\n\r]*)\n+\*\*Style Caption:\*\*\s*([^\n\r]*)\n+\*\*Style Name:\*\*\s*([^\n\r]*)\n+\*\*Final Caption:\*\*\s*((?:(?!<\|eot_id\|>).)*)",
-    re.DOTALL
+        r"\*\*Content Caption:\*\*\s*([^\n\r]*)\n+\*\*Style Caption:\*\*\s*([^\n\r]*)\n+\*\*Style Name:\*\*\s*([^\n\r]*)\n+\*\*Final Caption:\*\*\s*((?:(?!<\|eot_id\|>).)*)",
+        re.DOTALL
     )
-    match = pattern.search(text)
-    if match:
-        content_caption, style_caption, style_name, final_caption = match.groups()
-        if(content_caption == '' or style_caption == '' or style_name == '' or final_caption == ''):
-            print("some of the captions are missing: ")
+    
+    try:
+        match = pattern.search(text)
+        if not match:
+            print(f"No match found in text: {text[:100]}...")
             return None
-        else:
-            val_dict = {}
-            val_dict["Content Caption"] = content_caption
-            val_dict["Style Caption"] = style_caption
-            val_dict["Style Name"] = style_name
-            val_dict["Final Caption"] = final_caption
-            val_dict["Image Path"] = img_path
-    return val_dict
+            
+        content_caption, style_caption, style_name, final_caption = match.groups()
+        
+        # Check for empty fields
+        if not all([content_caption.strip(), style_caption.strip(), style_name.strip(), final_caption.strip()]):
+            print("Some captions are empty")
+            return None
+            
+        return {
+            "Content Caption": content_caption.strip(),
+            "Style Caption": style_caption.strip(),
+            "Style Name": style_name.strip(),
+            "Final Caption": final_caption.strip(),
+            "Image Path": img_path
+        }
+        
+    except Exception as e:
+        print(f"Error parsing text: {str(e)}")
+        return None
 
 def save_batch_to_csv(batch_data, batch_num, output_dir="/home/msai/birul001/BIRUL001/data/synthetic_caption_dataset/llama"):
     """Save a batch of outputs to a CSV file"""
@@ -59,13 +73,20 @@ def create_dataset():
         print(f"No images found in {input_dir}. Nothing to do.")
         return
 
-    print(f"Captioning {len(image_paths)} images from: {input_dir}")
+    total = len(image_paths)
+    if START_INDEX >= total:
+        print(f"START_INDEX={START_INDEX} is out of range (total images={total}). Nothing to do.")
+        return
+
+    print(f"Captioning {total - START_INDEX} images from: {input_dir} (starting at index {START_INDEX})")
     print(f"Processing in batches of {BATCH_SIZE}")
-    
+
     batch_output_list = []
-    batch_num = 1
-    
-    for idx, img_path in enumerate(tqdm(image_paths), 1):
+    # Compute starting batch number (1-based)
+    batch_num = (START_INDEX // BATCH_SIZE) + 1
+
+    # Iterate from START_INDEX; idx is the absolute 1-based index in image_paths
+    for idx, img_path in enumerate(tqdm(image_paths[START_INDEX:], total=total - START_INDEX), start=START_INDEX + 1):
         try:
             # Load and preprocess the image
             image = Image.open(img_path)
@@ -115,6 +136,9 @@ model = AutoModelForVision2Seq.from_pretrained(
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
 BATCH_SIZE = 100
+# Set START_INDEX to the zero-based index in `image_paths` where processing should begin.
+# For example, START_INDEX = 4500 will start from image_paths[4500].
+START_INDEX = 4500
 input_dir = "/home/msai/birul001/BIRUL001/data/synthetic_dataset"
 image_paths = list_images(input_dir)
 messages = [
