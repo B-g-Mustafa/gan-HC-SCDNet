@@ -1,4 +1,4 @@
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from transformers import MllamaProcessor, AutoModelForVision2Seq
 from PIL import Image
 import torch
 import os
@@ -127,7 +127,7 @@ def create_dataset():
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 
-processor = AutoProcessor.from_pretrained(model_id)
+processor = MllamaProcessor.from_pretrained(model_id)
 model = AutoModelForVision2Seq.from_pretrained(
     model_id,
     torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
@@ -138,7 +138,7 @@ SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
 BATCH_SIZE = 100
 # Set START_INDEX to the zero-based index in `image_paths` where processing should begin.
 # For example, START_INDEX = 4500 will start from image_paths[4500].
-START_INDEX = 4500
+START_INDEX = 56800
 input_dir = "/home/msai/birul001/BIRUL001/data/synthetic_dataset"
 image_paths = list_images(input_dir)
 messages = [
