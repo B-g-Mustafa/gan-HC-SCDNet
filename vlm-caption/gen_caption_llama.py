@@ -56,17 +56,74 @@ def extract_json_from_text(text: str, img_path: str):
         print(f"Error parsing text: {str(e)}")
         return None
 
-def save_batch_to_csv(batch_data, batch_num, output_dir="/home/msai/birul001/BIRUL001/data/synthetic_caption_dataset/llama"):
+def save_batch_to_csv(batch_data, batch_num, output_dir="/home/msai/birul001/BIRUL001/data/synthetic_caption_dataset/llama", prefix="captions"):
     """Save a batch of outputs to a CSV file"""
     if not batch_data:
         return
     
     os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, f"captions_batch_{batch_num:04d}.csv")
+    output_file = os.path.join(output_dir, f"{prefix}_batch_{batch_num:04d}.csv")
     
     df = pd.DataFrame(batch_data)
     df.to_csv(output_file, index=False)
     print(f"✓ Saved batch {batch_num} to {output_file}")
+
+def process_missing_data():
+    """Process missing data points from CSV and update their status"""
+    missing_data = pd.read_csv('/home/msai/birul001/BIRUL001/data/synthetic_caption_dataset/llama/missing_data_part_3.csv')
+    image_paths = missing_data[missing_data['captioned'] == 0]['ImagePath'].tolist()
+    
+    if len(image_paths) == 0:
+        print("No missing data points to process.")
+        return
+
+    print(f"Processing {len(image_paths)} missing images")
+    print(f"Processing in batches of {BATCH_SIZE}")
+
+    batch_output_list = []
+    batch_num = 1
+
+    for idx, img_path in enumerate(tqdm(image_paths), start=1):
+        try:
+            # Load and preprocess the image
+            image = Image.open("/home/msai/birul001/BIRUL001/"+img_path)
+            image = image.resize((224, 224), Image.Resampling.LANCZOS)
+            
+            input_text = processor.apply_chat_template(messages, add_generation_prompt=True)
+            inputs = processor(image, input_text, return_tensors="pt").to(model.device)
+            
+            output = model.generate(**inputs, max_new_tokens=300)
+            output_text = processor.decode(output[0])
+            output_json = extract_json_from_text(output_text, img_path)
+            
+            if output_json is not None:
+                batch_output_list.append(output_json)
+                # Update the status in missing_data DataFrame
+                missing_data.loc[missing_data['ImagePath'] == img_path, 'captioned'] = 1
+            
+        except Exception as e:
+            print(f"Error processing {img_path}: {str(e)}")
+            batch_output_list.append({
+                "Image Path": img_path,
+                "Content Caption": "",
+                "Style Caption": "",
+                "Style Name": "",
+                "Final Caption": "",
+                "Error": str(e)
+            })
+        
+        # Save batch when we reach BATCH_SIZE or at the end
+        if idx % BATCH_SIZE == 0 or idx == len(image_paths):
+            save_batch_to_csv(batch_output_list, batch_num, prefix="missed_caption")
+            batch_output_list = []  # Clear the batch list
+            batch_num += 1
+            
+            # Save the updated missing_data CSV
+            missing_data.to_csv('/home/msai/birul001/BIRUL001/data/synthetic_caption_dataset/llama/missing_data_part_3.csv', index=False)
+            
+            # Optional: clear CUDA cache every few batches
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 def create_dataset():
     if len(image_paths) == 0:
@@ -148,4 +205,8 @@ messages = [
     ]}
 ]
 
-create_dataset()
+# Process missing data points
+process_missing_data()
+
+# Uncomment below line to run the regular dataset creation
+# create_dataset()
