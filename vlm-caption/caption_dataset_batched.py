@@ -1,12 +1,12 @@
 """
-Optimized Batch Captioning for Style Transfer Dataset
+Optimized Batch Captioning for Style Transfer Dataset (Qwen2-VL)
 - Reads batch CSVs from dataset generation
-- Captions synthetic images in true batches (not one-by-one)
-- Generates enriched CSVs with all captions
-- Much faster than sequential processing
+- Captions synthetic images using Qwen2-VL-7B (TRUE batch processing)
+- Generates enriched CSVs with all captions (1 output CSV per input CSV)
+- Much faster than Llama while maintaining caption quality
 
 RESUME CAPABILITIES:
-1. Auto-resume from crashes: Progress saved after each batch, resumes from last position
+1. Auto-resume from crashes: Progress saved after each mini-batch, resumes from last position
 2. Skip completed batches: Won't reprocess batches that are 100% complete
 3. Manual batch selection: Set START_FROM_BATCH to skip to specific batch number
 4. Interrupt-safe: Press Ctrl+C to safely stop, resume later
@@ -18,11 +18,12 @@ USAGE:
 - Check progress: Look in dataset/captioning_progress/ for active batches
 """
 
-from transformers import MllamaProcessor, AutoModelForVision2Seq
+from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig
 from PIL import Image
 import torch
 import os
 import re
+import json
 import pandas as pd
 from tqdm import tqdm
 import glob
@@ -39,14 +40,15 @@ OUTPUT_CSV_DIR = os.path.join(DATASET_ROOT, "captioned_metadata")
 INPUT_CSV_PATTERN = "metadata_batch_*.csv"  # Process batch CSVs
 
 # Model settings
-MODEL_ID = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+MODEL_ID = "Qwen/Qwen2-VL-7B-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-USE_LOCAL_FILES_ONLY = False  # Set True to skip download and use cached model only
+USE_LOCAL_FILES_ONLY = True  # Set True to skip download and use cached model only
+USE_QUANTIZATION = False  # Use FP16 for best quality (A100 40GB has enough memory)
 
 # Performance settings
-BATCH_SIZE = 8  # Process 8 images simultaneously (adjust based on GPU memory)
-MAX_NEW_TOKENS = 300
-USE_FLASH_ATTENTION = False  # Disabled (requires CUDA dev tools to install)
+MINI_BATCH_SIZE = 12  # Process 12 images simultaneously with FP16 (adjust based on GPU memory)
+MAX_NEW_TOKENS = 200  # Qwen produces concise captions, 200 is enough
+SAVE_FREQUENCY = 50  # Save progress every N mini-batches
 
 # Resume settings
 RESUME_MODE = True  # Automatically resume from partially processed CSVs
@@ -59,16 +61,18 @@ os.makedirs(OUTPUT_CSV_DIR, exist_ok=True)
 os.makedirs(PROGRESS_DIR, exist_ok=True)
 
 print(f"\nDevice: {DEVICE}")
-print(f"Batch size: {BATCH_SIZE}")
+print(f"Mini-batch size: {MINI_BATCH_SIZE} images (processed simultaneously)")
+print(f"Quantization: {'4-bit' if USE_QUANTIZATION else 'FP16'}")
 print(f"Input CSVs: {INPUT_CSV_DIR}")
 print(f"Output CSVs: {OUTPUT_CSV_DIR}")
+print(f"Note: Each input CSV will produce one output CSV with same row count")
 
 # ==================== LOAD MODEL ====================
 print("\n" + "="*80)
 print("Loading model...")
 
 # Set cache directory and offline mode
-CACHE_DIR = "/home/msai/birul001/hf_cache"  # Persistent cache location
+CACHE_DIR = "/home/msai/birul001/.cache/huggingface"  # Use existing HF cache
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Set environment variables for Hugging Face
@@ -80,36 +84,41 @@ max_retries = 3
 for attempt in range(max_retries):
     try:
         print(f"Loading processor (attempt {attempt+1}/{max_retries})...")
-        processor = MllamaProcessor.from_pretrained(
+        processor = AutoProcessor.from_pretrained(
             MODEL_ID,
             cache_dir=CACHE_DIR,
-            resume_download=True,  # Resume interrupted downloads
-            local_files_only=USE_LOCAL_FILES_ONLY,  # Skip download if cached
+            trust_remote_code=True,
+            local_files_only=USE_LOCAL_FILES_ONLY,
         )
         
         print(f"Loading model (attempt {attempt+1}/{max_retries})...")
         
+        # Configure quantization for speed
+        if USE_QUANTIZATION:
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=False,
+                bnb_4bit_quant_type="nf4"
+            )
+            print("✓ 4-bit quantization enabled")
+        else:
+            quantization_config = None
+        
         # Load model with optimizations
-        model_kwargs = {
-            "torch_dtype": torch.bfloat16 if DEVICE == "cuda" else torch.float32,
-            "device_map": "auto",
-            "cache_dir": CACHE_DIR,
-            "resume_download": True,
-            "local_files_only": USE_LOCAL_FILES_ONLY,  # Skip download if cached
-        }
-        
-        # Enable Flash Attention 2 if available (2-3x faster)
-        if USE_FLASH_ATTENTION and DEVICE == "cuda":
-            try:
-                model_kwargs["attn_implementation"] = "flash_attention_2"
-                print("✓ Flash Attention 2 enabled")
-            except:
-                print("⚠ Flash Attention 2 not available, using default attention")
-        
-        model = AutoModelForVision2Seq.from_pretrained(MODEL_ID, **model_kwargs)
+        model = AutoModelForImageTextToText.from_pretrained(
+            MODEL_ID,
+            torch_dtype=torch.float16 if not USE_QUANTIZATION else None,
+            quantization_config=quantization_config,
+            device_map="auto",
+            cache_dir=CACHE_DIR,
+            trust_remote_code=True,
+            local_files_only=USE_LOCAL_FILES_ONLY,
+        )
         model.eval()  # Set to eval mode for faster inference
         
         print("✓ Model loaded successfully")
+        print(f"  Device: {model.device if hasattr(model, 'device') else 'auto-mapped'}")
         break
         
     except Exception as e:
@@ -135,37 +144,56 @@ for attempt in range(max_retries):
 def extract_captions_from_text(text: str):
     """
     Extract captions from model output.
-    Updated to handle the structured format we're requesting.
+    Qwen2-VL returns JSON format which we parse directly.
     """
-    
-    # Pattern to match the structured output
-    pattern = re.compile(
-        r"\*\*Content Caption:\*\*\s*([^\n\r]*)\n+\*\*Style Caption:\*\*\s*([^\n\r]*)\n+\*\*Style Name:\*\*\s*([^\n\r]*)\n+\*\*Final Caption:\*\*\s*((?:(?!<\|eot_id\|>).)*)",
-        re.DOTALL
-    )
-    
     try:
-        match = pattern.search(text)
-        if not match:
-            # Return empty strings if parsing fails
-            return {
-                "content_caption": "",
-                "style_caption": "",
-                "style_name": "",
-                "final_caption": ""
-            }
+        # Try to parse as JSON first (Qwen2-VL should output clean JSON)
+        # Remove any markdown code blocks if present
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
         
-        content_caption, style_caption, style_name, final_caption = match.groups()
+        # Parse JSON
+        data = json.loads(text)
         
         return {
-            "content_caption": content_caption.strip(),
-            "style_caption": style_caption.strip(),
-            "style_name": style_name.strip(),
-            "final_caption": final_caption.strip()
+            "content_caption": data.get("content_caption", "").strip(),
+            "style_caption": data.get("style_caption", "").strip(),
+            "style_name": data.get("style_name", "").strip(),
+            "final_caption": data.get("final_caption", "").strip()
+        }
+        
+    except json.JSONDecodeError:
+        # Fallback to regex parsing if JSON fails
+        pattern = re.compile(
+            r'"content_caption"\s*:\s*"([^"]*)".*?"style_caption"\s*:\s*"([^"]*)".*?"style_name"\s*:\s*"([^"]*)".*?"final_caption"\s*:\s*"([^"]*)"',
+            re.DOTALL
+        )
+        
+        match = pattern.search(text)
+        if match:
+            return {
+                "content_caption": match.group(1).strip(),
+                "style_caption": match.group(2).strip(),
+                "style_name": match.group(3).strip(),
+                "final_caption": match.group(4).strip()
+            }
+        
+        # Return empty if all parsing fails
+        return {
+            "content_caption": "",
+            "style_caption": "",
+            "style_name": "",
+            "final_caption": ""
         }
         
     except Exception as e:
-        print(f"Error parsing text: {str(e)}")
+        print(f"  ✗ Error parsing text: {str(e)[:100]}")
         return {
             "content_caption": "",
             "style_caption": "",
@@ -176,35 +204,31 @@ def extract_captions_from_text(text: str):
 # ==================== BATCH CAPTIONING ====================
 
 def create_prompt_messages():
-    """Create the prompt template for captioning"""
+    """Create the prompt template for Qwen2-VL captioning"""
     return [
         {"role": "user", "content": [
             {"type": "image"},
             {"type": "text", "text": (
-                "You are an expert vision-language model trained to describe both the *content* and *style* of images "
-                "for synthetic dataset annotation. Analyze the image carefully and produce captions that cover three aspects:\n"
-                "1. The **content** — what objects, scenes, or actions are visible.\n"
-                "2. The **style** — describe the artistic or visual characteristics such as brushwork, color palette, texture, "
-                "or digital art traits. If recognizable, identify the **style name or movement** (e.g., 'Van Gogh', 'Impressionism', "
-                "'Cyberpunk', 'Watercolor', '3D render', 'Anime', etc.).\n"
-                "3. The **final caption** — combine both content and style naturally, describing how the two interact visually.\n\n"
-                "Output format:\n"
-                "**Content Caption:** <description>\n"
-                "**Style Caption:** <style description>\n"
-                "**Style Name:** <style name or Unknown>\n"
-                "**Final Caption:** <combined description>\n\n"
+                "Analyze this image and describe both its content and artistic style. "
+                "Output a JSON object with these fields:\n\n"
+                "{\n"
+                '  "content_caption": "What objects, scenes, or actions are visible",\n'
+                '  "style_caption": "Artistic style characteristics (brushwork, colors, texture, etc.)",\n'
+                '  "style_name": "Style movement or artist name (e.g., Impressionism, Van Gogh, Anime, Cyberpunk) or Unknown",\n'
+                '  "final_caption": "Combined natural description of content and style"\n'
+                "}\n\n"
                 "Rules:\n"
-                "- Be factual and concise (1–2 sentences per field).\n"
-                "- Do not hallucinate or make assumptions beyond visible traits.\n"
-                "- Avoid extra commentary or explanations."
+                "- Be factual and concise (1-2 sentences per field)\n"
+                "- Output valid JSON only, no markdown, no extra text\n"
+                "- Focus on visible elements and recognizable style traits"
             )}
         ]}
     ]
 
 def process_image_batch(image_paths, base_path):
     """
-    Process a batch of images simultaneously.
-    This is the key optimization - process multiple images at once.
+    Process a batch of images simultaneously using Qwen2-VL.
+    This is TRUE batch processing - multiple images at once.
     """
     
     # Load all images in the batch
@@ -213,60 +237,62 @@ def process_image_batch(image_paths, base_path):
     
     for idx, img_path in enumerate(image_paths):
         try:
-            # Construct full path
             full_path = os.path.join(base_path, img_path)
-            
-            # Load image - NO RESIZING (model handles it internally)
             image = Image.open(full_path).convert("RGB")
             images.append(image)
             valid_indices.append(idx)
-            
         except Exception as e:
-            print(f"✗ Error loading {img_path}: {e}")
-            # Append None for failed images
-            images.append(None)
+            print(f"  ✗ Error loading {os.path.basename(img_path)}: {e}")
     
-    # Filter out None images
-    valid_images = [img for img in images if img is not None]
-    
-    if not valid_images:
+    if not images:
         return [None] * len(image_paths)
     
-    # Create prompts for batch
+    # Create prompt messages
     messages = create_prompt_messages()
     
-    # Process batch
     try:
         # Apply chat template
         input_text = processor.apply_chat_template(messages, add_generation_prompt=True)
         
-        # Batch processing - process all valid images at once
+        # Batch processing - process all images at once
         inputs = processor(
-            images=valid_images,
-            text=[input_text] * len(valid_images),  # Same prompt for all
+            images=images,
+            text=[input_text] * len(images),
             return_tensors="pt",
             padding=True
         ).to(model.device)
         
         # Generate captions for entire batch
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
-                do_sample=False,  # Deterministic for consistency
-                temperature=None,  # Disable sampling
-                top_p=None,
-                use_cache=True,  # Enable KV cache for faster generation
-            )
+        with torch.amp.autocast('cuda', dtype=torch.float16):
+            with torch.inference_mode():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=MAX_NEW_TOKENS,
+                    do_sample=False,
+                    use_cache=True,
+                    num_beams=1,  # Greedy decoding for speed
+                    pad_token_id=processor.tokenizer.pad_token_id if hasattr(processor, 'tokenizer') else None,
+                    eos_token_id=processor.tokenizer.eos_token_id if hasattr(processor, 'tokenizer') else None,
+                )
         
         # Decode all outputs
         batch_captions = []
-        for output in outputs:
-            output_text = processor.decode(output, skip_special_tokens=True)
+        for i in range(outputs.shape[0]):
+            generated_ids = outputs[i][inputs['input_ids'].shape[1]:]
+            output_text = processor.decode(generated_ids, skip_special_tokens=True)
+            
+            # Print first few outputs for debugging/regex development
+            if i < 3:  # Print first 3 outputs
+                print(f"\n{'='*80}")
+                print(f"Sample Output {i+1}:")
+                print(f"{'='*80}")
+                print(output_text)
+                print(f"{'='*80}\n")
+            
             captions = extract_captions_from_text(output_text)
             batch_captions.append(captions)
         
-        # Map back to original indices (accounting for failed loads)
+        # Map back to original indices
         results = []
         valid_idx = 0
         for idx in range(len(image_paths)):
@@ -279,7 +305,7 @@ def process_image_batch(image_paths, base_path):
         return results
         
     except Exception as e:
-        print(f"✗ Batch processing error: {e}")
+        print(f"  ✗ Batch processing error: {str(e)[:200]}")
         return [None] * len(image_paths)
 
 # ==================== PROCESS BATCH CSVs ====================
@@ -345,34 +371,39 @@ def process_batch_csv(csv_path, base_path):
     
     print(f"  Processing {remaining} remaining images (from {start_idx}/{len(synthetic_paths)})")
     
-    # Process in batches
+    # Process in mini-batches
+    batch_count = 0
     with tqdm(total=remaining, desc="  Captioning", unit="img", initial=0) as pbar:
-        for i in range(start_idx, len(synthetic_paths), BATCH_SIZE):
-            batch_paths = synthetic_paths[i:i+BATCH_SIZE]
+        for i in range(start_idx, len(synthetic_paths), MINI_BATCH_SIZE):
+            batch_paths = synthetic_paths[i:i+MINI_BATCH_SIZE]
             
-            # Process batch
+            # Process mini-batch (TRUE batch processing - all images simultaneously)
             batch_results = process_image_batch(batch_paths, base_path)
             
             # Update dataframe
             for j, result in enumerate(batch_results):
                 row_idx = i + j
-                if result is not None:
-                    df.at[row_idx, 'content_caption'] = result['content_caption']
-                    df.at[row_idx, 'style_caption'] = result['style_caption']
-                    df.at[row_idx, 'style_name'] = result['style_name']
-                    df.at[row_idx, 'final_caption'] = result['final_caption']
+                if row_idx < len(synthetic_paths):  # Safety check
+                    if result is not None:
+                        df.at[row_idx, 'content_caption'] = result['content_caption']
+                        df.at[row_idx, 'style_caption'] = result['style_caption']
+                        df.at[row_idx, 'style_name'] = result['style_name']
+                        df.at[row_idx, 'final_caption'] = result['final_caption']
             
-            # Save progress immediately after each batch
-            df.to_csv(output_path, index=False)
+            batch_count += 1
             
-            # Update progress tracker
-            with open(progress_file, 'w') as f:
-                f.write(str(min(i + BATCH_SIZE, len(synthetic_paths))))
+            # Save progress periodically (not every mini-batch to reduce I/O)
+            if batch_count % SAVE_FREQUENCY == 0 or i + MINI_BATCH_SIZE >= len(synthetic_paths):
+                df.to_csv(output_path, index=False)
+                
+                # Update progress tracker
+                with open(progress_file, 'w') as f:
+                    f.write(str(min(i + MINI_BATCH_SIZE, len(synthetic_paths))))
             
             pbar.update(len(batch_paths))
             
             # Clear CUDA cache periodically
-            if i % (BATCH_SIZE * 5) == 0 and torch.cuda.is_available():
+            if batch_count % 10 == 0 and torch.cuda.is_available():
                 torch.cuda.empty_cache()
     
     # Mark as complete
