@@ -4,6 +4,18 @@ Optimized Batch Captioning for Style Transfer Dataset
 - Captions synthetic images in true batches (not one-by-one)
 - Generates enriched CSVs with all captions
 - Much faster than sequential processing
+
+RESUME CAPABILITIES:
+1. Auto-resume from crashes: Progress saved after each batch, resumes from last position
+2. Skip completed batches: Won't reprocess batches that are 100% complete
+3. Manual batch selection: Set START_FROM_BATCH to skip to specific batch number
+4. Interrupt-safe: Press Ctrl+C to safely stop, resume later
+
+USAGE:
+- Normal run: Just execute the script
+- Resume after crash: Re-run the script (auto-detects partial progress)
+- Start from batch N: Set START_FROM_BATCH = N in configuration
+- Check progress: Look in dataset/captioning_progress/ for active batches
 """
 
 from transformers import MllamaProcessor, AutoModelForVision2Seq
@@ -29,17 +41,22 @@ INPUT_CSV_PATTERN = "metadata_batch_*.csv"  # Process batch CSVs
 # Model settings
 MODEL_ID = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+USE_LOCAL_FILES_ONLY = False  # Set True to skip download and use cached model only
 
 # Performance settings
 BATCH_SIZE = 8  # Process 8 images simultaneously (adjust based on GPU memory)
 MAX_NEW_TOKENS = 300
-USE_FLASH_ATTENTION = True  # Enable if available (faster inference)
+USE_FLASH_ATTENTION = False  # Disabled (requires CUDA dev tools to install)
 
 # Resume settings
-RESUME_MODE = False  # Set to True to skip already processed batch CSVs
-SKIP_EXISTING = True  # Skip batches that already have output CSVs
+RESUME_MODE = True  # Automatically resume from partially processed CSVs
+SKIP_EXISTING = True  # Skip batches that are 100% complete
+START_FROM_BATCH = None  # Set to batch number (e.g., 1, 2, 3) to start from specific batch, None = auto-detect
 
+# Progress tracking
+PROGRESS_DIR = os.path.join(DATASET_ROOT, "captioning_progress")
 os.makedirs(OUTPUT_CSV_DIR, exist_ok=True)
+os.makedirs(PROGRESS_DIR, exist_ok=True)
 
 print(f"\nDevice: {DEVICE}")
 print(f"Batch size: {BATCH_SIZE}")
@@ -50,26 +67,68 @@ print(f"Output CSVs: {OUTPUT_CSV_DIR}")
 print("\n" + "="*80)
 print("Loading model...")
 
-processor = MllamaProcessor.from_pretrained(MODEL_ID)
+# Set cache directory and offline mode
+CACHE_DIR = "/home/msai/birul001/hf_cache"  # Persistent cache location
+os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Load model with optimizations
-model_kwargs = {
-    "torch_dtype": torch.bfloat16 if DEVICE == "cuda" else torch.float32,
-    "device_map": "auto",
-}
+# Set environment variables for Hugging Face
+os.environ['HF_HOME'] = CACHE_DIR
+os.environ['TRANSFORMERS_CACHE'] = CACHE_DIR
 
-# Enable Flash Attention 2 if available (2-3x faster)
-if USE_FLASH_ATTENTION and DEVICE == "cuda":
+# Try loading with retries for network issues
+max_retries = 3
+for attempt in range(max_retries):
     try:
-        model_kwargs["attn_implementation"] = "flash_attention_2"
-        print("✓ Flash Attention 2 enabled")
-    except:
-        print("⚠ Flash Attention 2 not available, using default attention")
-
-model = AutoModelForVision2Seq.from_pretrained(MODEL_ID, **model_kwargs)
-model.eval()  # Set to eval mode for faster inference
-
-print("✓ Model loaded")
+        print(f"Loading processor (attempt {attempt+1}/{max_retries})...")
+        processor = MllamaProcessor.from_pretrained(
+            MODEL_ID,
+            cache_dir=CACHE_DIR,
+            resume_download=True,  # Resume interrupted downloads
+            local_files_only=USE_LOCAL_FILES_ONLY,  # Skip download if cached
+        )
+        
+        print(f"Loading model (attempt {attempt+1}/{max_retries})...")
+        
+        # Load model with optimizations
+        model_kwargs = {
+            "torch_dtype": torch.bfloat16 if DEVICE == "cuda" else torch.float32,
+            "device_map": "auto",
+            "cache_dir": CACHE_DIR,
+            "resume_download": True,
+            "local_files_only": USE_LOCAL_FILES_ONLY,  # Skip download if cached
+        }
+        
+        # Enable Flash Attention 2 if available (2-3x faster)
+        if USE_FLASH_ATTENTION and DEVICE == "cuda":
+            try:
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+                print("✓ Flash Attention 2 enabled")
+            except:
+                print("⚠ Flash Attention 2 not available, using default attention")
+        
+        model = AutoModelForVision2Seq.from_pretrained(MODEL_ID, **model_kwargs)
+        model.eval()  # Set to eval mode for faster inference
+        
+        print("✓ Model loaded successfully")
+        break
+        
+    except Exception as e:
+        print(f"✗ Attempt {attempt+1} failed: {str(e)[:200]}")
+        if attempt < max_retries - 1:
+            print(f"  Retrying in 30 seconds...")
+            import time
+            time.sleep(30)
+        else:
+            print("\n" + "="*80)
+            print("ERROR: Failed to load model after all retries")
+            print("="*80)
+            print("\nPossible solutions:")
+            print("1. Check internet connection")
+            print("2. Download model manually first:")
+            print(f"   huggingface-cli download {MODEL_ID} --cache-dir {CACHE_DIR}")
+            print("3. Use a different network or VPN")
+            print("4. Set local_files_only=True if model is already cached")
+            raise
 
 # ==================== CAPTION EXTRACTION ====================
 
@@ -239,24 +298,56 @@ def process_batch_csv(csv_path, base_path):
     output_filename = os.path.basename(csv_path).replace("metadata_batch_", "captioned_batch_")
     output_path = os.path.join(OUTPUT_CSV_DIR, output_filename)
     
-    if SKIP_EXISTING and os.path.exists(output_path):
-        print(f"  ✓ Already processed, skipping")
-        return
+    # Progress tracking file for this batch
+    batch_name = os.path.splitext(output_filename)[0]
+    progress_file = os.path.join(PROGRESS_DIR, f"{batch_name}_progress.txt")
     
-    # Initialize caption columns
-    df['content_caption'] = ""
-    df['style_caption'] = ""
-    df['style_name'] = ""
-    df['final_caption'] = ""
+    # Check resume state
+    start_idx = 0
+    if RESUME_MODE and os.path.exists(progress_file):
+        # Read last completed index
+        with open(progress_file, 'r') as f:
+            start_idx = int(f.read().strip())
+        print(f"  ↻ Resuming from row {start_idx}")
+        
+        # Load partially completed output if exists
+        if os.path.exists(output_path):
+            df = pd.read_csv(output_path)
+            print(f"  ↻ Loaded partial results")
+    elif SKIP_EXISTING and os.path.exists(output_path):
+        # Check if 100% complete
+        existing_df = pd.read_csv(output_path)
+        if 'final_caption' in existing_df.columns:
+            completed = (existing_df['final_caption'] != "").sum()
+            if completed == len(existing_df):
+                print(f"  ✓ Already 100% complete, skipping")
+                return
+            else:
+                print(f"  ↻ Partially complete ({completed}/{len(existing_df)}), resuming")
+                df = existing_df
+                start_idx = completed
+    
+    # Initialize caption columns if not present
+    if 'content_caption' not in df.columns:
+        df['content_caption'] = ""
+        df['style_caption'] = ""
+        df['style_name'] = ""
+        df['final_caption'] = ""
     
     # Get synthetic image paths
     synthetic_paths = df['synthetic_path'].tolist()
     
-    # Process in batches
-    total_batches = (len(synthetic_paths) + BATCH_SIZE - 1) // BATCH_SIZE
+    # Process from start_idx onwards
+    remaining = len(synthetic_paths) - start_idx
+    if remaining <= 0:
+        print(f"  ✓ Already complete")
+        return
     
-    with tqdm(total=len(synthetic_paths), desc="  Captioning", unit="img") as pbar:
-        for i in range(0, len(synthetic_paths), BATCH_SIZE):
+    print(f"  Processing {remaining} remaining images (from {start_idx}/{len(synthetic_paths)})")
+    
+    # Process in batches
+    with tqdm(total=remaining, desc="  Captioning", unit="img", initial=0) as pbar:
+        for i in range(start_idx, len(synthetic_paths), BATCH_SIZE):
             batch_paths = synthetic_paths[i:i+BATCH_SIZE]
             
             # Process batch
@@ -271,15 +362,25 @@ def process_batch_csv(csv_path, base_path):
                     df.at[row_idx, 'style_name'] = result['style_name']
                     df.at[row_idx, 'final_caption'] = result['final_caption']
             
+            # Save progress immediately after each batch
+            df.to_csv(output_path, index=False)
+            
+            # Update progress tracker
+            with open(progress_file, 'w') as f:
+                f.write(str(min(i + BATCH_SIZE, len(synthetic_paths))))
+            
             pbar.update(len(batch_paths))
             
             # Clear CUDA cache periodically
             if i % (BATCH_SIZE * 5) == 0 and torch.cuda.is_available():
                 torch.cuda.empty_cache()
     
-    # Save enriched CSV
-    df.to_csv(output_path, index=False)
-    print(f"  ✓ Saved to: {output_filename}")
+    # Mark as complete
+    print(f"  ✓ Completed: {output_filename}")
+    
+    # Clean up progress file once 100% complete
+    if os.path.exists(progress_file):
+        os.remove(progress_file)
     
     # Print statistics
     captioned_count = (df['final_caption'] != "").sum()
@@ -302,10 +403,28 @@ def main():
     
     print(f"✓ Found {len(batch_csvs)} batch CSV files")
     
+    # Apply START_FROM_BATCH filter if specified
+    if START_FROM_BATCH is not None:
+        print(f"↻ Starting from batch {START_FROM_BATCH}")
+        batch_csvs = [csv for csv in batch_csvs if 
+                     int(re.search(r'batch_(\d+)', csv).group(1)) >= START_FROM_BATCH]
+        print(f"  → Processing {len(batch_csvs)} batches")
+    
+    # Show resume status
+    if RESUME_MODE:
+        progress_files = glob.glob(os.path.join(PROGRESS_DIR, "*_progress.txt"))
+        if progress_files:
+            print(f"↻ Resume mode: Found {len(progress_files)} partially completed batches")
+    
     # Process each batch CSV
-    for csv_path in batch_csvs:
+    for idx, csv_path in enumerate(batch_csvs, 1):
         try:
+            print(f"\n[Batch {idx}/{len(batch_csvs)}]")
             process_batch_csv(csv_path, DATASET_ROOT)
+        except KeyboardInterrupt:
+            print("\n\n⚠ Interrupted by user")
+            print("✓ Progress saved - you can resume by running this script again")
+            return
         except Exception as e:
             print(f"✗ Error processing {os.path.basename(csv_path)}: {e}")
             continue
