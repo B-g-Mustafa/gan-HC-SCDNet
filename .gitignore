@@ -40,4 +40,4 @@ b-vae/model/*
 .env
 .vscode/
 .gitignore
-st-vae-style-decoding/models/*
+st-vae-style-decoding/models/*.idea/
