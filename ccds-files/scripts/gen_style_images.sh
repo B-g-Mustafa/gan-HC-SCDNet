@@ -3,11 +3,11 @@
 #SBATCH --qos=normal                  # QoS level
 #SBATCH --nodes=1                     # Use 1 node
 #SBATCH --gres=gpu:1                  # Request 1 GPU
-#SBATCH --mem=30G                     # Allocate 30 GB of memory
+#SBATCH --mem=40G                     # Allocate 40 GB of memory
 #SBATCH --time=05:55:00               # Max job time = 5 hours 55 minutes
 #SBATCH --job-name=vae_train          # Job name
-#SBATCH --output=/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/logs/others/output_%x_%j.out   # Std output log
-#SBATCH --error=/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/logs/others/error_%x_%j.err     # Std error log
+#SBATCH --output=/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/logs/others/gen-test-images_%x_%j.out   # Std output log
+#SBATCH --error=/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/logs/others/gen-test-images_error_%x_%j.err     # Std error log
 
 # export WANDB_API_KEY="d9a74b72096b984643e4b3246a816e62be94d572"
 # export HF_TOKEN="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"
@@ -26,20 +26,20 @@ source "${HOME_PATH}/birul001-gan/bin/activate"
 # -----------------------------
 # Step 3: Ensure required packages are installed
 # -----------------------------
-echo "Checking and installing required Python libraries..."
-REQUIREMENTS_FILE="/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/requirement.txt"  # path to your requirements
-if [ -f "$REQUIREMENTS_FILE" ]; then
-    pip install --upgrade pip
-    pip install -r "$REQUIREMENTS_FILE"
-else
-    echo "No requirements.txt found, installing default AI libraries..."
-    pip install torch torchvision torchaudio transformers numpy
-fi
+# echo "Checking and installing required Python libraries..."
+# REQUIREMENTS_FILE="/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files/requirement.txt"  # path to your requirements
+# if [ -f "$REQUIREMENTS_FILE" ]; then
+    # pip install --upgrade pip
+    # pip install -r "$REQUIREMENTS_FILE"
+# else
+    # echo "No requirements.txt found, installing default AI libraries..."
+    # pip install torch torchvision torchaudio transformers numpy
+# fi
 
 # -----------------------------
 # Step 3: Define paths for the AI task
 # -----------------------------
-PYTHON_SCRIPT="/home/msai/birul001/gan-project/gan-HC-SCDNet/st-vae-style-decoding/decode-style-image.py"  # <-- your Python script path
+PYTHON_SCRIPT="/home/msai/birul001/gan-project/gan-HC-SCDNet/st-vae-style-decoding/gen-test-images.py"  # <-- your Python script path
 # CONTENT_PATH="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/train/"
 # CONTENT_PATH_val="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/coco_split/test/"
 # STYLE_PATH="/home/msai/birul001/gan-project/gan-HC-SCDNet/b-vae/data/wikiart_split/train/"
@@ -55,7 +55,7 @@ CCDS_DIR="/home/msai/birul001/gan-project/gan-HC-SCDNet/ccds-files"
 # Create a unique, timestamped output file and write a header
 RUN_TS=$(date +"%Y%m%d_%H%M%S")
 JOB_ID="${SLURM_JOB_ID:-local}"
-OUTPUT_TXT="${CCDS_DIR}/py-output/generate_style_images_${RUN_TS}_${JOB_ID}.txt"
+OUTPUT_TXT="${CCDS_DIR}/py-output/gen-test-images_${RUN_TS}_${JOB_ID}.txt"
 {
   echo "==== VAE Training Run ===="
   echo "Started: $(date)"

@@ -34,10 +34,11 @@ print("Optimized Batch Captioning for Style Transfer Dataset")
 print("="*80)
 
 # Paths
-DATASET_ROOT = "/home/msai/birul001/BIRUL001/dataset/"
+DATASET_ROOT = "/home/msai/birul001/BIRUL001/dataset/test"
 INPUT_CSV_DIR = os.path.join(DATASET_ROOT, "metadata")
 OUTPUT_CSV_DIR = os.path.join(DATASET_ROOT, "captioned_metadata")
-INPUT_CSV_PATTERN = "metadata_batch_*.csv"  # Process batch CSVs
+COMPLETE_CSV_PATH = os.path.join(INPUT_CSV_DIR, "complete_metadata.csv")
+OUTPUT_COMPLETE_CSV = os.path.join(OUTPUT_CSV_DIR, "complete_captioned_metadata.csv")
 
 # Model settings
 MODEL_ID = "Qwen/Qwen2-VL-7B-Instruct"
@@ -48,24 +49,31 @@ USE_QUANTIZATION = False  # Use FP16 for best quality (A100 40GB has enough memo
 # Performance settings
 MINI_BATCH_SIZE = 12  # Process 12 images simultaneously with FP16 (adjust based on GPU memory)
 MAX_NEW_TOKENS = 200  # Qwen produces concise captions, 200 is enough
-SAVE_FREQUENCY = 50  # Save progress every N mini-batches
+SAVE_FREQUENCY = 100  # Save progress every N mini-batches (100 * 12 = 1200 images)
+
+# Backup settings (prevent data loss)
+CREATE_INTERMEDIATE_BACKUPS = True  # Save batch CSVs every N rows as backup
+BACKUP_INTERVAL = 5000  # Create backup CSV every 5000 rows
+BACKUP_DIR = os.path.join(OUTPUT_CSV_DIR, "backups")
 
 # Resume settings
-RESUME_MODE = True  # Automatically resume from partially processed CSVs
-SKIP_EXISTING = True  # Skip batches that are 100% complete
-START_FROM_BATCH = None  # Set to batch number (e.g., 1, 2, 3) to start from specific batch, None = auto-detect
+RESUME_MODE = True  # Automatically resume from partially processed CSV
+START_FROM_ROW = None  # Set to row number to start from specific row, None = auto-detect
 
 # Progress tracking
-PROGRESS_DIR = os.path.join(DATASET_ROOT, "captioning_progress")
+PROGRESS_FILE = os.path.join(DATASET_ROOT, "captioning_progress.txt")
 os.makedirs(OUTPUT_CSV_DIR, exist_ok=True)
-os.makedirs(PROGRESS_DIR, exist_ok=True)
+if CREATE_INTERMEDIATE_BACKUPS:
+    os.makedirs(BACKUP_DIR, exist_ok=True)
 
 print(f"\nDevice: {DEVICE}")
 print(f"Mini-batch size: {MINI_BATCH_SIZE} images (processed simultaneously)")
 print(f"Quantization: {'4-bit' if USE_QUANTIZATION else 'FP16'}")
-print(f"Input CSVs: {INPUT_CSV_DIR}")
-print(f"Output CSVs: {OUTPUT_CSV_DIR}")
-print(f"Note: Each input CSV will produce one output CSV with same row count")
+print(f"Input CSV: {COMPLETE_CSV_PATH}")
+print(f"Output CSV: {OUTPUT_COMPLETE_CSV}")
+print(f"Processing entire dataset in one go with resume support")
+if CREATE_INTERMEDIATE_BACKUPS:
+    print(f"Backup CSVs: Every {BACKUP_INTERVAL:,} rows in {BACKUP_DIR}")
 
 # ==================== LOAD MODEL ====================
 print("\n" + "="*80)
@@ -308,50 +316,50 @@ def process_image_batch(image_paths, base_path):
         print(f"  ✗ Batch processing error: {str(e)[:200]}")
         return [None] * len(image_paths)
 
-# ==================== PROCESS BATCH CSVs ====================
+# ==================== PROCESS COMPLETE CSV ====================
 
-def process_batch_csv(csv_path, base_path):
-    """Process a single batch CSV and generate enriched output"""
+def process_complete_csv():
+    """Process the complete metadata CSV and generate captioned output"""
     
     print(f"\n{'='*80}")
-    print(f"Processing: {os.path.basename(csv_path)}")
+    print(f"Processing: {os.path.basename(COMPLETE_CSV_PATH)}")
+    
+    # Check if input exists
+    if not os.path.exists(COMPLETE_CSV_PATH):
+        print(f"✗ Input CSV not found: {COMPLETE_CSV_PATH}")
+        return
     
     # Read input CSV
-    df = pd.read_csv(csv_path)
-    print(f"  Rows: {len(df)}")
-    
-    # Check if output already exists
-    output_filename = os.path.basename(csv_path).replace("metadata_batch_", "captioned_batch_")
-    output_path = os.path.join(OUTPUT_CSV_DIR, output_filename)
-    
-    # Progress tracking file for this batch
-    batch_name = os.path.splitext(output_filename)[0]
-    progress_file = os.path.join(PROGRESS_DIR, f"{batch_name}_progress.txt")
+    df = pd.read_csv(COMPLETE_CSV_PATH)
+    total_rows = len(df)
+    print(f"  Total rows: {total_rows:,}")
     
     # Check resume state
     start_idx = 0
-    if RESUME_MODE and os.path.exists(progress_file):
-        # Read last completed index
-        with open(progress_file, 'r') as f:
-            start_idx = int(f.read().strip())
-        print(f"  ↻ Resuming from row {start_idx}")
+    
+    if RESUME_MODE and os.path.exists(OUTPUT_COMPLETE_CSV):
+        # Load existing output
+        existing_df = pd.read_csv(OUTPUT_COMPLETE_CSV)
         
-        # Load partially completed output if exists
-        if os.path.exists(output_path):
-            df = pd.read_csv(output_path)
-            print(f"  ↻ Loaded partial results")
-    elif SKIP_EXISTING and os.path.exists(output_path):
-        # Check if 100% complete
-        existing_df = pd.read_csv(output_path)
         if 'final_caption' in existing_df.columns:
+            # Count completed captions
             completed = (existing_df['final_caption'] != "").sum()
-            if completed == len(existing_df):
-                print(f"  ✓ Already 100% complete, skipping")
+            
+            if completed == total_rows:
+                print(f"  ✓ Already 100% complete ({total_rows:,} images captioned)")
                 return
-            else:
-                print(f"  ↻ Partially complete ({completed}/{len(existing_df)}), resuming")
+            elif completed > 0:
+                print(f"  ↻ Found partial progress: {completed:,}/{total_rows:,} images captioned")
+                print(f"  ↻ Resuming from row {completed}")
                 df = existing_df
                 start_idx = completed
+            else:
+                print(f"  Starting fresh captioning")
+        else:
+            print(f"  Starting fresh captioning")
+    elif START_FROM_ROW is not None:
+        start_idx = START_FROM_ROW
+        print(f"  ↻ Starting from row {start_idx} (manual override)")
     
     # Initialize caption columns if not present
     if 'content_caption' not in df.columns:
@@ -364,26 +372,30 @@ def process_batch_csv(csv_path, base_path):
     synthetic_paths = df['synthetic_path'].tolist()
     
     # Process from start_idx onwards
-    remaining = len(synthetic_paths) - start_idx
+    remaining = total_rows - start_idx
     if remaining <= 0:
         print(f"  ✓ Already complete")
         return
     
-    print(f"  Processing {remaining} remaining images (from {start_idx}/{len(synthetic_paths)})")
+    print(f"\n  Processing {remaining:,} remaining images (from row {start_idx:,} to {total_rows:,})")
+    print(f"  Saving progress every {SAVE_FREQUENCY * MINI_BATCH_SIZE:,} images")
+    print(f"{'='*80}\n")
     
     # Process in mini-batches
     batch_count = 0
-    with tqdm(total=remaining, desc="  Captioning", unit="img", initial=0) as pbar:
-        for i in range(start_idx, len(synthetic_paths), MINI_BATCH_SIZE):
+    last_backup_row = (start_idx // BACKUP_INTERVAL) * BACKUP_INTERVAL if CREATE_INTERMEDIATE_BACKUPS else 0
+    
+    with tqdm(total=remaining, desc="Captioning", unit="img", initial=0) as pbar:
+        for i in range(start_idx, total_rows, MINI_BATCH_SIZE):
             batch_paths = synthetic_paths[i:i+MINI_BATCH_SIZE]
             
             # Process mini-batch (TRUE batch processing - all images simultaneously)
-            batch_results = process_image_batch(batch_paths, base_path)
+            batch_results = process_image_batch(batch_paths, DATASET_ROOT)
             
             # Update dataframe
             for j, result in enumerate(batch_results):
                 row_idx = i + j
-                if row_idx < len(synthetic_paths):  # Safety check
+                if row_idx < total_rows:  # Safety check
                     if result is not None:
                         df.at[row_idx, 'content_caption'] = result['content_caption']
                         df.at[row_idx, 'style_caption'] = result['style_caption']
@@ -391,102 +403,73 @@ def process_batch_csv(csv_path, base_path):
                         df.at[row_idx, 'final_caption'] = result['final_caption']
             
             batch_count += 1
+            current_row = i + MINI_BATCH_SIZE
             
             # Save progress periodically (not every mini-batch to reduce I/O)
-            if batch_count % SAVE_FREQUENCY == 0 or i + MINI_BATCH_SIZE >= len(synthetic_paths):
-                df.to_csv(output_path, index=False)
+            if batch_count % SAVE_FREQUENCY == 0 or current_row >= total_rows:
+                df.to_csv(OUTPUT_COMPLETE_CSV, index=False)
                 
-                # Update progress tracker
-                with open(progress_file, 'w') as f:
-                    f.write(str(min(i + MINI_BATCH_SIZE, len(synthetic_paths))))
+                # Create intermediate backup CSV at intervals
+                if CREATE_INTERMEDIATE_BACKUPS and current_row >= last_backup_row + BACKUP_INTERVAL:
+                    backup_num = current_row // BACKUP_INTERVAL
+                    backup_path = os.path.join(BACKUP_DIR, f"backup_{backup_num:04d}_rows_{last_backup_row:06d}_{current_row:06d}.csv")
+                    # Save only the rows completed in this backup interval
+                    df.iloc[last_backup_row:current_row].to_csv(backup_path, index=False)
+                    last_backup_row = current_row
+                    pbar.write(f"  ✓ Backup saved: {os.path.basename(backup_path)}")
+                
+                # Update progress in progress bar
+                completed_now = (df['final_caption'] != "").sum()
+                pbar.set_postfix({
+                    'completed': f"{completed_now:,}/{total_rows:,}",
+                    'batch': batch_count
+                })
             
             pbar.update(len(batch_paths))
             
             # Clear CUDA cache periodically
-            if batch_count % 10 == 0 and torch.cuda.is_available():
+            if batch_count % 20 == 0 and torch.cuda.is_available():
                 torch.cuda.empty_cache()
     
-    # Mark as complete
-    print(f"  ✓ Completed: {output_filename}")
-    
-    # Clean up progress file once 100% complete
-    if os.path.exists(progress_file):
-        os.remove(progress_file)
+    # Final save
+    df.to_csv(OUTPUT_COMPLETE_CSV, index=False)
     
     # Print statistics
     captioned_count = (df['final_caption'] != "").sum()
-    print(f"  ✓ Successfully captioned: {captioned_count}/{len(df)} ({captioned_count/len(df)*100:.1f}%)")
+    print(f"\n{'='*80}")
+    print(f"✓ CAPTIONING COMPLETE!")
+    print(f"{'='*80}")
+    print(f"  Output: {OUTPUT_COMPLETE_CSV}")
+    print(f"  Successfully captioned: {captioned_count:,}/{total_rows:,} ({captioned_count/total_rows*100:.1f}%)")
+    print(f"  Failed: {total_rows - captioned_count:,}")
+    
+    if CREATE_INTERMEDIATE_BACKUPS:
+        backup_csvs = sorted(glob.glob(os.path.join(BACKUP_DIR, "backup_*.csv")))
+        print(f"  Backup CSVs created: {len(backup_csvs)} (in {BACKUP_DIR})")
+    
+    print(f"{'='*80}")
 
 # ==================== MAIN ====================
 
 def main():
     print("\n" + "="*80)
-    print("Starting batch processing...")
+    print("Starting complete dataset captioning...")
     print("="*80)
     
-    # Find all batch CSVs
-    csv_pattern = os.path.join(INPUT_CSV_DIR, INPUT_CSV_PATTERN)
-    batch_csvs = sorted(glob.glob(csv_pattern))
-    
-    if not batch_csvs:
-        print(f"✗ No batch CSVs found matching pattern: {INPUT_CSV_PATTERN}")
+    try:
+        process_complete_csv()
+    except KeyboardInterrupt:
+        print("\n\n" + "="*80)
+        print("⚠ Interrupted by user")
+        print("="*80)
+        print("✓ Progress saved - you can resume by running this script again")
+        print(f"✓ Partial results saved to: {OUTPUT_COMPLETE_CSV}")
         return
-    
-    print(f"✓ Found {len(batch_csvs)} batch CSV files")
-    
-    # Apply START_FROM_BATCH filter if specified
-    if START_FROM_BATCH is not None:
-        print(f"↻ Starting from batch {START_FROM_BATCH}")
-        batch_csvs = [csv for csv in batch_csvs if 
-                     int(re.search(r'batch_(\d+)', csv).group(1)) >= START_FROM_BATCH]
-        print(f"  → Processing {len(batch_csvs)} batches")
-    
-    # Show resume status
-    if RESUME_MODE:
-        progress_files = glob.glob(os.path.join(PROGRESS_DIR, "*_progress.txt"))
-        if progress_files:
-            print(f"↻ Resume mode: Found {len(progress_files)} partially completed batches")
-    
-    # Process each batch CSV
-    for idx, csv_path in enumerate(batch_csvs, 1):
-        try:
-            print(f"\n[Batch {idx}/{len(batch_csvs)}]")
-            process_batch_csv(csv_path, DATASET_ROOT)
-        except KeyboardInterrupt:
-            print("\n\n⚠ Interrupted by user")
-            print("✓ Progress saved - you can resume by running this script again")
-            return
-        except Exception as e:
-            print(f"✗ Error processing {os.path.basename(csv_path)}: {e}")
-            continue
-    
-    # Combine all captioned batches into one complete CSV
-    print("\n" + "="*80)
-    print("Combining all batches into complete CSV...")
-    
-    captioned_csvs = sorted(glob.glob(os.path.join(OUTPUT_CSV_DIR, "captioned_batch_*.csv")))
-    
-    if captioned_csvs:
-        all_dfs = [pd.read_csv(csv) for csv in captioned_csvs]
-        combined_df = pd.concat(all_dfs, ignore_index=True)
-        
-        complete_output = os.path.join(OUTPUT_CSV_DIR, "complete_captioned_metadata.csv")
-        combined_df.to_csv(complete_output, index=False)
-        
-        print(f"✓ Combined {len(captioned_csvs)} batch CSVs")
-        print(f"✓ Total rows: {len(combined_df)}")
-        print(f"✓ Saved to: {complete_output}")
-        
-        # Statistics
-        captioned = (combined_df['final_caption'] != "").sum()
-        print(f"\nFinal Statistics:")
-        print(f"  Total samples: {len(combined_df)}")
-        print(f"  Successfully captioned: {captioned} ({captioned/len(combined_df)*100:.1f}%)")
-        print(f"  Failed: {len(combined_df) - captioned}")
-    
-    print("\n" + "="*80)
-    print("CAPTIONING COMPLETE!")
-    print("="*80)
+    except Exception as e:
+        print(f"\n✗ Error during processing: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
 if __name__ == "__main__":
     main()

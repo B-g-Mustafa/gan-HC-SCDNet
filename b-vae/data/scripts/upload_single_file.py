@@ -134,9 +134,9 @@ def upload_file(filepath: str, drive_folder_id: str, new_filename: str = None):
 
 def main():
     parser = argparse.ArgumentParser(description="Upload a single file to Google Drive")
-    parser.add_argument('--file', '-f', required=True, default="/home/msai/birul001/BIRUL001/data/syn_data.zip",
+    parser.add_argument('--file', '-f', required=True, default="/home/msai/birul001/gan-project/gan-HC-SCDNet/dataset_captioned.tar.gz",
                        help="Local file to upload")
-    parser.add_argument('--drive-id', '-d', required=True, default="1eDnwErgTeR3VsoVzElKM7fFAl-CwtvtR",
+    parser.add_argument('--drive-id', '-d', required=True, default="11euKusj0vU-GiyrG8WY3Ih820Fsvc_2d",
                        help="Drive folder ID to upload into")
     parser.add_argument('--name', '-n',
                        help="Optional: New filename to use in Drive")

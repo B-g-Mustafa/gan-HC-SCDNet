@@ -33,6 +33,8 @@ LEARNING_RATE = 1e-4
 MAX_GRAD_NORM = 1.0
 WARMUP_STEPS = 500
 SAVE_EVERY = 5  # Save checkpoint every N epochs
+EVAL_EVERY = 5  # Run evaluation every N epochs
+TRAIN_SPLIT = 0.95  # 95% train, 5% eval (57k train, 3k eval)
 
 # LoRA Configuration
 LORA_RANK = 16
@@ -62,12 +64,22 @@ print(f"Output: {OUTPUT_DIR}")
 class StyleTransferDataset(Dataset):
     """Dataset for style-transferred images with VLM captions"""
     
-    def __init__(self, csv_path, dataset_root):
+    def __init__(self, csv_path, dataset_root, split='train', train_ratio=0.95):
         self.df = pd.read_csv(csv_path)
         self.dataset_root = dataset_root
+        self.split = split
         
         # Filter out rows with empty captions
         self.df = self.df[self.df['final_caption'].notna() & (self.df['final_caption'] != '')]
+        
+        # Split into train/eval (do not modify original CSV)
+        total_samples = len(self.df)
+        train_size = int(total_samples * train_ratio)
+        
+        if split == 'train':
+            self.df = self.df.iloc[:train_size].reset_index(drop=True)
+        elif split == 'eval':
+            self.df = self.df.iloc[train_size:].reset_index(drop=True)
         
         self.transform = transforms.Compose([
             transforms.Resize((512, 512)),
@@ -75,9 +87,9 @@ class StyleTransferDataset(Dataset):
             transforms.Normalize([0.5], [0.5])
         ])
         
-        print(f"Dataset loaded: {len(self.df):,} samples with captions")
+        print(f"{split.upper()} dataset loaded: {len(self.df):,} samples")
         if len(self.df) > 0:
-            print(f"Sample caption: {self.df.iloc[0]['final_caption'][:100]}...")
+            print(f"  Sample caption: {self.df.iloc[0]['final_caption'][:100]}...")
 
     def __len__(self):
         return len(self.df)
@@ -106,12 +118,33 @@ def setup_model_and_optimizer():
     print("Loading Stable Diffusion v1.5...")
     print(f"{'='*80}")
     
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        "runwayml/stable-diffusion-v1-5",
-        torch_dtype=torch.float16,
-        safety_checker=None,
-        requires_safety_checker=False
-    )
+    try:
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5",
+            torch_dtype=torch.float16,
+            safety_checker=None,
+            requires_safety_checker=False,
+            variant="fp16",
+            use_safetensors=True
+        )
+    except Exception as e:
+        print(f"Error loading pipeline with fp16 variant: {e}")
+        print("Trying without variant...")
+        try:
+            pipeline = StableDiffusionPipeline.from_pretrained(
+                "runwayml/stable-diffusion-v1-5",
+                torch_dtype=torch.float16,
+                safety_checker=None,
+                requires_safety_checker=False
+            )
+        except Exception as e2:
+            print(f"Error loading pipeline: {e2}")
+            print("Trying with float32...")
+            pipeline = StableDiffusionPipeline.from_pretrained(
+                "runwayml/stable-diffusion-v1-5",
+                safety_checker=None,
+                requires_safety_checker=False
+            )
     
     # Move to device
     pipeline.vae.to(device)
@@ -258,9 +291,101 @@ def train_one_epoch(pipeline, optimizer, noise_scheduler, train_loader, epoch, g
     avg_epoch_loss = epoch_loss / len(train_loader)
     return avg_epoch_loss, global_step
 
+@torch.no_grad()
+def evaluate(pipeline, noise_scheduler, eval_loader, epoch):
+    """Evaluate on evaluation set"""
+    
+    pipeline.unet.eval()
+    eval_loss = 0.0
+    num_batches = 0
+    
+    print(f"\n{'='*80}")
+    print(f"Running Evaluation at Epoch {epoch}")
+    print(f"{'='*80}")
+    
+    progress_bar = tqdm(eval_loader, desc=f"Evaluating")
+    
+    for batch in progress_bar:
+        try:
+            images = batch["image"]
+            captions = batch["caption"]
+            
+            # Encode to latents
+            latents = encode_images(pipeline.vae, images)
+            
+            # Encode text
+            text_embeddings = encode_text(
+                pipeline.tokenizer,
+                pipeline.text_encoder,
+                captions
+            )
+            
+            # Sample timesteps
+            timesteps = torch.randint(
+                0, noise_scheduler.config.num_train_timesteps,
+                (latents.shape[0],),
+                device=device
+            ).long()
+            
+            # Add noise
+            noise = torch.randn_like(latents)
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            
+            # Predict noise
+            model_pred = pipeline.unet(
+                noisy_latents,
+                timesteps,
+                encoder_hidden_states=text_embeddings
+            ).sample
+            
+            # Evaluation loss
+            loss = F.mse_loss(model_pred.float(), noise.float(), reduction="mean")
+            eval_loss += loss.item()
+            num_batches += 1
+            
+            progress_bar.set_postfix({'eval_loss': f"{loss.item():.4f}"})
+            
+        except Exception as e:
+            print(f"\nError in evaluation batch: {e}")
+            continue
+    
+    avg_eval_loss = eval_loss / num_batches if num_batches > 0 else float('inf')
+    
+    print(f"\n{'='*80}")
+    print(f"Evaluation Results at Epoch {epoch}")
+    print(f"{'='*80}")
+    print(f"  Average Evaluation Loss: {avg_eval_loss:.4f}")
+    print(f"  Total Evaluation Batches: {num_batches}")
+    print(f"{'='*80}\n")
+    
+    return avg_eval_loss
+
 # ==================== MAIN TRAINING ====================
 
 def main():
+    # Print dependency versions first
+    print(f"\n{'='*80}")
+    print("DEPENDENCY VERSIONS CHECK")
+    print(f"{'='*80}")
+    try:
+        import torch
+        import transformers
+        import diffusers
+        import peft
+        import wandb
+        print(f"PyTorch: {torch.__version__}")
+        print(f"Transformers: {transformers.__version__}")
+        print(f"Diffusers: {diffusers.__version__}")
+        print(f"PEFT: {peft.__version__}")
+        print(f"WandB: {wandb.__version__}")
+        print(f"CUDA Available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"CUDA Version: {torch.version.cuda}")
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+    except Exception as e:
+        print(f"Error checking dependencies: {e}")
+    print(f"{'='*80}")
+    
     # Initialize WandB
     wandb.init(
         project=WANDB_PROJECT,
@@ -280,19 +405,32 @@ def main():
         }
     )
     
-    # Load dataset
+    # Load train and eval datasets
     print(f"\n{'='*80}")
-    print("Loading dataset...")
+    print("Loading datasets...")
     print(f"{'='*80}")
-    dataset = StyleTransferDataset(CSV_PATH, DATASET_ROOT)
+    
+    train_dataset = StyleTransferDataset(CSV_PATH, DATASET_ROOT, split='train', train_ratio=TRAIN_SPLIT)
+    eval_dataset = StyleTransferDataset(CSV_PATH, DATASET_ROOT, split='eval', train_ratio=TRAIN_SPLIT)
+    
     train_loader = DataLoader(
-        dataset,
+        train_dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
         num_workers=4,
         pin_memory=True
     )
-    print(f"Total batches per epoch: {len(train_loader):,}")
+    
+    eval_loader = DataLoader(
+        eval_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
+    )
+    
+    print(f"\nTraining batches per epoch: {len(train_loader):,}")
+    print(f"Evaluation batches: {len(eval_loader):,}")
     
     # Setup model
     pipeline, optimizer, noise_scheduler = setup_model_and_optimizer()
@@ -303,20 +441,52 @@ def main():
     print(f"{'='*80}\n")
     
     global_step = 0
+    best_eval_loss = float('inf')
     
     for epoch in range(1, NUM_EPOCHS + 1):
-        avg_loss, global_step = train_one_epoch(
+        # Train
+        avg_train_loss, global_step = train_one_epoch(
             pipeline, optimizer, noise_scheduler,
             train_loader, epoch, global_step
         )
         
-        print(f"\nEpoch {epoch}/{NUM_EPOCHS} - Avg Loss: {avg_loss:.4f}")
+        # Print detailed epoch summary
+        print(f"\n{'='*80}")
+        print(f"EPOCH {epoch}/{NUM_EPOCHS} SUMMARY")
+        print(f"{'='*80}")
+        print(f"  Training Loss:        {avg_train_loss:.6f}")
+        print(f"  Learning Rate:        {optimizer.param_groups[0]['lr']:.2e}")
+        print(f"  Batch Size:           {BATCH_SIZE}")
+        print(f"  Gradient Accumulation: {GRADIENT_ACCUMULATION_STEPS}")
+        print(f"  Effective Batch Size: {BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS}")
+        print(f"  LoRA Rank:            {LORA_RANK}")
+        print(f"  LoRA Alpha:           {LORA_ALPHA}")
+        print(f"  Global Steps:         {global_step}")
         
-        # Log epoch metrics
-        wandb.log({
-            "epoch/loss": avg_loss,
-            "epoch/number": epoch
-        }, step=global_step)
+        # Run evaluation every EVAL_EVERY epochs
+        eval_loss = None
+        if epoch % EVAL_EVERY == 0 or epoch == NUM_EPOCHS:
+            eval_loss = evaluate(pipeline, noise_scheduler, eval_loader, epoch)
+            print(f"  Evaluation Loss:      {eval_loss:.6f}")
+            
+            # Track best model
+            if eval_loss < best_eval_loss:
+                best_eval_loss = eval_loss
+                print(f"  >>> NEW BEST MODEL! (Eval Loss: {best_eval_loss:.6f})")
+        
+        print(f"{'='*80}\n")
+        
+        # Log epoch metrics to WandB
+        log_dict = {
+            "epoch/train_loss": avg_train_loss,
+            "epoch/number": epoch,
+            "epoch/learning_rate": optimizer.param_groups[0]['lr']
+        }
+        if eval_loss is not None:
+            log_dict["epoch/eval_loss"] = eval_loss
+            log_dict["epoch/best_eval_loss"] = best_eval_loss
+        
+        wandb.log(log_dict, step=global_step)
         
         # Save checkpoint
         if epoch % SAVE_EVERY == 0 or epoch == NUM_EPOCHS:
@@ -347,9 +517,20 @@ def main():
     pipeline.save_pretrained(os.path.join(OUTPUT_DIR, "pipeline-final"), safe_serialization=True)
     
     print(f"\n{'='*80}")
-    print("Training Complete!")
+    print("TRAINING COMPLETE!")
     print(f"{'='*80}")
     print(f"Final model saved to: {final_dir}")
+    print(f"Best Evaluation Loss: {best_eval_loss:.6f}")
+    print(f"\nHyperparameters Used:")
+    print(f"  Learning Rate:        {LEARNING_RATE:.2e}")
+    print(f"  Batch Size:           {BATCH_SIZE}")
+    print(f"  Gradient Accumulation: {GRADIENT_ACCUMULATION_STEPS}")
+    print(f"  Epochs:               {NUM_EPOCHS}")
+    print(f"  LoRA Rank:            {LORA_RANK}")
+    print(f"  LoRA Alpha:           {LORA_ALPHA}")
+    print(f"  LoRA Dropout:         {LORA_DROPOUT}")
+    print(f"  Train/Eval Split:     {TRAIN_SPLIT:.2%} / {1-TRAIN_SPLIT:.2%}")
+    print(f"{'='*80}")
     
     wandb.finish()
 
