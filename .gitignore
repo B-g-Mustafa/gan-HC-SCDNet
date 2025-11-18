@@ -10,6 +10,8 @@ existing-pretrained/*.jpeg
 # Ignore dataset split folders (entire directories)
 b-vae/data/wikiart_split/
 b-vae/data/coco_split/
+b-vae/data/scripts/*.json
+b-vae/infer/
 
 #ignore .ipycache files
 **/.ipynb_checkpoints/
@@ -22,9 +24,23 @@ ccds-files/logs/*.err
 ccds-files/logs/*.out
 ccds-files/logs/infer/
 ccds-files/infer_output/
+ccds-files/finetune_output/
+ccds-files/logs
+ccds-files/test_results
+ccds-files/train_output/
+ccds-files/scripts/wandb/
+ccds-files/results/
+ccds-files/wandb/
+ccds-files/finetune_diff.sh
+ccds-files/finetune/*
+
+wandb/*
+=*
 
 #model checkpoints
 b-vae/model/*
 # Keep any local envs or other common ignores (optional)
 .env
 .vscode/
+.gitignore
+st-vae-style-decoding/models/*
