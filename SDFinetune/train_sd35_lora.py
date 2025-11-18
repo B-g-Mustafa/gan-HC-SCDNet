@@ -26,18 +26,18 @@ PROJECT_NAME = "style-transfer-sd35-lora"
 RUN_NAME = "sd35-lora-60k-20epochs-distributed"
 
 # Paths
-DATASET_ROOT = "/home/msai/birul001/BIRUL001/dataset/"
+DATASET_ROOT = "/home/users/ntu/birul001/scratch/mustafa/gan-project/dataset/"
 CSV_PATH = os.path.join(DATASET_ROOT, "captioned_metadata/complete_captioned_metadata.csv")
-OUTPUT_DIR = "/home/msai/birul001/BIRUL001/models/sd35_lora"
+OUTPUT_DIR = "/home/users/ntu/birul001/scratch/mustafa/gan-project/models/sd35_lora"
 
 # Hyperparameters
-NUM_EPOCHS = 20
+NUM_EPOCHS = 10
 BATCH_SIZE = 4  # Optimized for A100 40GB with mixed precision
 GRADIENT_ACCUMULATION_STEPS = 4  # Effective batch size per GPU = 16, total = 32 across 2 GPUs
 LEARNING_RATE = 5e-5  # Lower LR for larger model
 MAX_GRAD_NORM = 1.0
 WARMUP_STEPS = 500
-SAVE_EVERY = 5
+SAVE_EVERY = 2
 
 # LoRA Configuration
 LORA_RANK = 32  # Higher rank for SD3.5
