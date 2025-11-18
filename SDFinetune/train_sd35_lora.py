@@ -6,6 +6,8 @@ Note: SD3.5 uses a different architecture (MMDiT) compared to SD1.5
 """
 
 import os
+import socket
+import subprocess
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -53,17 +55,140 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ==================== DISTRIBUTED SETUP ====================
 
+def get_pbs_info():
+    """Extract PBS job information from environment variables"""
+    pbs_info = {
+        'jobid': os.environ.get('PBS_JOBID', 'N/A'),
+        'jobname': os.environ.get('PBS_JOBNAME', 'N/A'),
+        'nodefile': os.environ.get('PBS_NODEFILE', None),
+        'queue': os.environ.get('PBS_QUEUE', 'N/A'),
+        'num_nodes': os.environ.get('PBS_NUM_NODES', '1'),
+        'num_ppn': os.environ.get('PBS_NUM_PPN', 'N/A'),
+    }
+    return pbs_info
+
+def get_master_ip():
+    """
+    Automatically get an IP address that other nodes can reach.
+    Works with PBS scheduler and across different cluster configurations.
+    """
+    try:
+        # Method 1: Try to get IP from hostname resolution
+        hostname = socket.gethostname()
+        ip = socket.gethostbyname(hostname)
+        
+        # Verify it's not localhost
+        if ip.startswith('127.'):
+            # Method 2: Get IP from default route
+            result = subprocess.run(
+                ["ip", "route", "get", "8.8.8.8"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5
+            )
+            ip = result.stdout.split("src")[1].split()[0]
+        
+        return ip
+    
+    except Exception as e:
+        print(f"Warning: Could not auto-detect IP: {e}")
+        print("Falling back to localhost")
+        return "localhost"
+
+def get_available_port(start_port=12355, end_port=12365):
+    """Find an available port in the given range"""
+    import socket
+    
+    for port in range(start_port, end_port):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', port))
+                return port
+        except OSError:
+            continue
+    
+    raise RuntimeError(f"No available ports in range {start_port}-{end_port}")
+
 def parse_args():
     """Parse command line arguments for distributed training"""
     parser = argparse.ArgumentParser(description='SD3.5 LoRA Distributed Training')
     parser.add_argument("--gpu", type=int, required=True, help="GPU ID (0 or 1)")
     parser.add_argument("--world_size", type=int, default=2, help="Total number of GPUs")
-    parser.add_argument("--master_addr", type=str, default="localhost", help="Master node address")
-    parser.add_argument("--master_port", type=str, default="12355", help="Master port")
+    parser.add_argument("--master_addr", type=str, default=None, help="Master node address (auto-detect if not provided)")
+    parser.add_argument("--master_port", type=str, default=None, help="Master port (auto-detect if not provided)")
     return parser.parse_args()
 
-def setup_distributed(gpu_id, world_size, master_addr, master_port):
-    """Initialize distributed training for manual process setup"""
+def setup_distributed(gpu_id, world_size, master_addr=None, master_port=None):
+    """Initialize distributed training for manual process setup with PBS support"""
+    
+    # Print PBS job information if available
+    pbs_info = get_pbs_info()
+    if pbs_info['jobid'] != 'N/A':
+        print(f"\n{'='*80}")
+        print(f"📋 PBS JOB INFORMATION")
+        print(f"{'='*80}")
+        print(f"Job ID: {pbs_info['jobid']}")
+        print(f"Job Name: {pbs_info['jobname']}")
+        print(f"Queue: {pbs_info['queue']}")
+        print(f"Node: {socket.gethostname()}")
+        print(f"{'='*80}\n")
+    
+    # Auto-detect master address if not provided
+    if master_addr is None:
+        if gpu_id == 0:
+            # Main process: detect and broadcast IP
+            master_addr = get_master_ip()
+            print(f"🔍 Auto-detected master IP: {master_addr}")
+            
+            # Save to shared file for workers to read
+            master_file = "/tmp/sd35_master_addr.txt"
+            with open(master_file, 'w') as f:
+                f.write(master_addr)
+        else:
+            # Worker process: read from shared file
+            import time
+            master_file = "/tmp/sd35_master_addr.txt"
+            max_wait = 30  # Wait up to 30 seconds
+            
+            print(f"[GPU {gpu_id}] ⏳ Waiting for main process to write master IP...")
+            for i in range(max_wait):
+                try:
+                    with open(master_file, 'r') as f:
+                        master_addr = f.read().strip()
+                    print(f"[GPU {gpu_id}] 📖 Read master IP from file: {master_addr}")
+                    break
+                except FileNotFoundError:
+                    time.sleep(1)
+            else:
+                raise RuntimeError("Could not read master address from main process")
+    
+    # Auto-detect available port if not provided
+    if master_port is None:
+        if gpu_id == 0:
+            master_port = str(get_available_port())
+            print(f"🔍 Auto-detected available port: {master_port}")
+            
+            # Save to shared file
+            port_file = "/tmp/sd35_master_port.txt"
+            with open(port_file, 'w') as f:
+                f.write(master_port)
+        else:
+            import time
+            port_file = "/tmp/sd35_master_port.txt"
+            max_wait = 30
+            
+            for i in range(max_wait):
+                try:
+                    with open(port_file, 'r') as f:
+                        master_port = f.read().strip()
+                    print(f"[GPU {gpu_id}] 📖 Read master port from file: {master_port}")
+                    break
+                except FileNotFoundError:
+                    time.sleep(1)
+            else:
+                raise RuntimeError("Could not read master port from main process")
+    
     os.environ['MASTER_ADDR'] = master_addr
     os.environ['MASTER_PORT'] = master_port
     os.environ['WORLD_SIZE'] = str(world_size)
@@ -88,6 +213,7 @@ def setup_distributed(gpu_id, world_size, master_addr, master_port):
     print(f"✓ World Size: {world_size}")
     print(f"✓ Master: {master_addr}:{master_port}")
     print(f"✓ Backend: NCCL")
+    print(f"✓ Hostname: {socket.gethostname()}")
     print(f"{'='*80}")
     
     return gpu_id
