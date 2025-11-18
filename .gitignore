@@ -8,10 +8,7 @@ existing-pretrained/*.png
 existing-pretrained/*.jpg
 existing-pretrained/*.jpeg
 # Ignore dataset split folders (entire directories)
-b-vae/data/wikiart_split/
-b-vae/data/coco_split/
-b-vae/data/scripts/*.json
-b-vae/infer/
+
 
 #ignore .ipycache files
 **/.ipynb_checkpoints/

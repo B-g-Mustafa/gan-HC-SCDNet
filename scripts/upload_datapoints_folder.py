@@ -285,7 +285,7 @@ def main():
         print(f"[Main] Current working directory: {os.getcwd()}", flush=True)
         print(f"[Main] Contents of current directory:", flush=True)
         try:
-            for item in os.listdir('.'):
+            for item in os.listdir(''):
                 print(f"  - {item}", flush=True)
         except Exception as e:
             print(f"  Could not list directory: {e}", flush=True)
